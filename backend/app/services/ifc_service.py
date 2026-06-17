@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import random
 from datetime import datetime
 from pathlib import Path
@@ -23,6 +24,30 @@ CORE_CLASSES = [
     "IfcSpace",
 ]
 
+ENTITY_RE = re.compile(rb"=\s*(IFC[A-Z0-9_]+)\s*\(")
+DISPLAY_NAMES = {
+    "IFCWALL": "IfcWall",
+    "IFCWALLSTANDARDCASE": "IfcWallStandardCase",
+    "IFCSLAB": "IfcSlab",
+    "IFCBEAM": "IfcBeam",
+    "IFCCOLUMN": "IfcColumn",
+    "IFCPIPESEGMENT": "IfcPipeSegment",
+    "IFCPIPEFITTING": "IfcPipeFitting",
+    "IFCPIPEACCESSORY": "IfcPipeAccessory",
+    "IFCDUCTSEGMENT": "IfcDuctSegment",
+    "IFCDUCTFITTING": "IfcDuctFitting",
+    "IFCMECHANICALFASTENER": "IfcMechanicalFastener",
+    "IFCPROPERTYSET": "IfcPropertySet",
+    "IFCRELDEFINESBYPROPERTIES": "IfcRelDefinesByProperties",
+    "IFCDOOR": "IfcDoor",
+    "IFCWINDOW": "IfcWindow",
+    "IFCSPACE": "IfcSpace",
+    "IFCBUILDINGELEMENTPROXY": "IfcBuildingElementProxy",
+    "IFCFLOWSEGMENT": "IfcFlowSegment",
+    "IFCFLOWFITTING": "IfcFlowFitting",
+    "IFCFLOWTERMINAL": "IfcFlowTerminal",
+}
+
 
 class IfcService:
     """IfcOpenShell-backed service with deterministic fallback for development."""
@@ -33,7 +58,7 @@ class IfcService:
 
             return self._analyze_with_ifcopenshell(path, ifcopenshell)
         except Exception:
-            return self._demo_analysis(path)
+            return self._streaming_step_analysis(path)
 
     def estimate_reduction(self, file_size: int, mode: str) -> dict:
         ratios = {"safe": 0.18, "medium": 0.34, "aggressive": 0.58}
@@ -101,6 +126,53 @@ class IfcService:
             classes=classes,
         )
 
+    def _streaming_step_analysis(self, path: Path) -> AnalysisResult:
+        size = max(path.stat().st_size, 1)
+        counts: dict[str, int] = {}
+        schema = "IFC"
+        with path.open("rb") as fh:
+            for raw_line in fh:
+                if b"FILE_SCHEMA" in raw_line:
+                    text = raw_line.decode("utf-8", errors="ignore")
+                    if "IFC4X3" in text.upper():
+                        schema = "IFC4X3"
+                    elif "IFC4" in text.upper():
+                        schema = "IFC4"
+                    elif "IFC2X3" in text.upper():
+                        schema = "IFC2X3"
+                match = ENTITY_RE.search(raw_line)
+                if not match:
+                    continue
+                key = match.group(1).decode("ascii", errors="ignore")
+                counts[key] = counts.get(key, 0) + 1
+
+        if not counts:
+            return self._demo_analysis(path)
+
+        classes: list[ClassStat] = []
+        for key, count in sorted(counts.items(), key=lambda item: item[1], reverse=True):
+            name = DISPLAY_NAMES.get(key, self._display_name(key))
+            geometry = count if self._is_product_like(key) else 0
+            triangles = geometry * self._triangle_estimate(key)
+            classes.append(ClassStat(name=name, count=count, geometry=geometry, triangles=triangles))
+
+        property_count = sum(count for key, count in counts.items() if key.startswith("IFCPROPERTY"))
+        quantity_count = sum(count for key, count in counts.items() if key.startswith("IFCQUANTITY") or key == "IFCELEMENTQUANTITY")
+        geometry_count = sum(item.geometry for item in classes)
+        triangle_count = sum(item.triangles for item in classes)
+        return AnalysisResult(
+            schema=schema,
+            total_entities=sum(counts.values()),
+            total_products=geometry_count,
+            total_ifc_classes=len(counts),
+            file_size=size,
+            geometry_count=geometry_count,
+            triangle_count=triangle_count,
+            property_count=property_count,
+            quantity_count=quantity_count,
+            classes=classes[:250],
+        )
+
     def _demo_analysis(self, path: Path) -> AnalysisResult:
         size = max(path.stat().st_size, 1)
         with path.open("rb") as fh:
@@ -126,3 +198,69 @@ class IfcService:
             quantity_count=rng.randint(600, 4000) * max(1, scale),
             classes=classes,
         )
+
+    def _display_name(self, key: str) -> str:
+        body = key.removeprefix("IFC").replace("_", " ").title().replace(" ", "")
+        return f"Ifc{body}"
+
+    def _is_product_like(self, key: str) -> bool:
+        excluded_prefixes = (
+            "IFCREL",
+            "IFCPROPERTY",
+            "IFCQUANTITY",
+            "IFCOWNER",
+            "IFCPERSON",
+            "IFCORGANIZATION",
+            "IFCAPPROVAL",
+            "IFCDOCUMENT",
+            "IFCSTYLE",
+            "IFCCARTESIAN",
+            "IFCDIRECTION",
+            "IFCAXIS",
+            "IFCLOCALPLACEMENT",
+            "IFCSHAPE",
+            "IFCPRODUCTDEFINITIONSHAPE",
+            "IFCGEOMETRIC",
+            "IFCPRESENTATION",
+            "IFCSIUNIT",
+            "IFCUNIT",
+            "IFCMEASURE",
+        )
+        if key.startswith(excluded_prefixes):
+            return False
+        product_markers = (
+            "WALL",
+            "SLAB",
+            "BEAM",
+            "COLUMN",
+            "DOOR",
+            "WINDOW",
+            "SPACE",
+            "STAIR",
+            "ROOF",
+            "MEMBER",
+            "PLATE",
+            "PIPE",
+            "DUCT",
+            "FLOW",
+            "FURNISH",
+            "EQUIPMENT",
+            "TERMINAL",
+            "FASTENER",
+            "PROXY",
+            "COVERING",
+            "RAILING",
+            "RAMP",
+            "FOOTING",
+            "PILE",
+        )
+        return any(marker in key for marker in product_markers)
+
+    def _triangle_estimate(self, key: str) -> int:
+        if "PIPE" in key or "DUCT" in key:
+            return 420
+        if "FASTENER" in key:
+            return 160
+        if "WALL" in key or "SLAB" in key:
+            return 520
+        return 320
