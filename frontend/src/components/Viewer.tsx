@@ -1,6 +1,6 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
-import { IfcClassStat, IfcElement } from "../types/bim";
+import { GeometryMesh, GeometryStatus, IfcClassStat, IfcElement } from "../types/bim";
 import { compact } from "../lib/format";
 
 type Props = {
@@ -8,9 +8,12 @@ type Props = {
   focusedElement: IfcElement | null;
   modelName: string;
   isDemo: boolean;
+  geometry: GeometryMesh[];
+  geometryStatus: GeometryStatus;
+  onRequestGeometry: () => void;
 };
 
-export function Viewer({ classes, focusedElement, modelName, isDemo }: Props) {
+export function Viewer({ classes, focusedElement, modelName, isDemo, geometry, geometryStatus, onRequestGeometry }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -34,8 +37,26 @@ export function Viewer({ classes, focusedElement, modelName, isDemo }: Props) {
     scene.add(grid);
 
     const group = new THREE.Group();
-    const visible = classes.filter((item) => item.visible && item.geometry > 0);
-    visible.slice(0, 7).forEach((item, index) => {
+    if (geometry.length > 0) {
+      const bounds = new THREE.Box3();
+      geometry.forEach((item) => {
+        const meshGeometry = new THREE.BufferGeometry();
+        meshGeometry.setAttribute("position", new THREE.Float32BufferAttribute(item.positions, 3));
+        meshGeometry.setIndex(item.indices);
+        meshGeometry.computeVertexNormals();
+        meshGeometry.computeBoundingBox();
+        if (meshGeometry.boundingBox) bounds.union(meshGeometry.boundingBox);
+        const material = new THREE.MeshStandardMaterial({ color: item.color, roughness: 0.7, metalness: 0.02 });
+        group.add(new THREE.Mesh(meshGeometry, material));
+      });
+      const size = bounds.getSize(new THREE.Vector3());
+      const center = bounds.getCenter(new THREE.Vector3());
+      const maxAxis = Math.max(size.x, size.y, size.z, 1);
+      group.position.sub(center);
+      group.scale.setScalar(34 / maxAxis);
+    } else if (isDemo) {
+      const visible = classes.filter((item) => item.visible && item.geometry > 0);
+      visible.slice(0, 7).forEach((item, index) => {
       const material = new THREE.MeshStandardMaterial({
         color: item.color,
         roughness: 0.58,
@@ -48,7 +69,8 @@ export function Viewer({ classes, focusedElement, modelName, isDemo }: Props) {
       mesh.position.set((index - 3) * 3.4, 0.5 + (index % 4) * 1.1, Math.sin(index) * 4);
       mesh.rotation.y = index * 0.15;
       group.add(mesh);
-    });
+      });
+    }
     scene.add(group);
 
     let frame = 0;
@@ -60,7 +82,7 @@ export function Viewer({ classes, focusedElement, modelName, isDemo }: Props) {
     };
     const animate = () => {
       frame = requestAnimationFrame(animate);
-      group.rotation.y += 0.0015;
+      if (isDemo) group.rotation.y += 0.0015;
       renderer.render(scene, camera);
     };
     resize();
@@ -78,7 +100,7 @@ export function Viewer({ classes, focusedElement, modelName, isDemo }: Props) {
         }
       });
     };
-  }, [classes]);
+  }, [classes, geometry, isDemo]);
 
   const triangles = classes.reduce((total, item) => total + (item.visible ? item.triangles : 0), 0);
   const visibleClasses = classes.filter((item) => item.visible).length;
@@ -112,9 +134,22 @@ export function Viewer({ classes, focusedElement, modelName, isDemo }: Props) {
         </div>
         <div className="mt-2 flex justify-between">
           <span>Cache</span>
-          <span className="text-ok">project.ifc.cache</span>
+          <span className={geometryStatus === "ready" ? "text-ok" : "text-warn"}>{geometryLabel(geometryStatus)}</span>
         </div>
+        {!isDemo && geometryStatus !== "loading" && geometryStatus !== "ready" && (
+          <button className="mt-3 h-8 w-full bg-brand text-xs font-semibold text-slate-950 hover:bg-sky-300" onClick={onRequestGeometry}>
+            Generate Geometry Preview
+          </button>
+        )}
       </div>
+      {!isDemo && geometry.length === 0 && (
+        <div className="absolute inset-x-4 bottom-4 border border-line bg-shell/90 px-4 py-3 text-sm text-slate-300">
+          {geometryStatus === "loading" && "Generating real IFC geometry preview from IfcOpenShell..."}
+          {geometryStatus === "failed" && "Geometry preview is not ready yet. Analysis data is real; retry after cache generation or lower the class selection."}
+          {geometryStatus === "empty" && "No renderable geometry was returned for the selected preview limit."}
+          {geometryStatus === "idle" && "Waiting to request real IFC geometry preview."}
+        </div>
+      )}
       {focusedElement && (
         <div className="absolute left-4 bottom-4 border border-brand bg-sky-950/85 px-3 py-2 text-sm text-sky-100 shadow-lg shadow-sky-950/30">
           Highlighted {focusedElement.name} · STEP {focusedElement.stepId}
@@ -122,4 +157,12 @@ export function Viewer({ classes, focusedElement, modelName, isDemo }: Props) {
       )}
     </main>
   );
+}
+
+function geometryLabel(status: GeometryStatus): string {
+  if (status === "ready") return "real geometry";
+  if (status === "loading") return "generating";
+  if (status === "failed") return "not ready";
+  if (status === "empty") return "empty";
+  return "project.ifc.cache";
 }

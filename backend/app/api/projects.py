@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.models.database import get_db
 from app.models.project import BackgroundTask, Project, ProjectStatus, TaskKind
-from app.models.schemas import DeleteClassesRequest, ExportRequest, OptimizeRequest, ProjectRead, TaskRead, UploadResponse
+from app.models.schemas import DeleteClassesRequest, ExportRequest, GeometryResponse, OptimizeRequest, ProjectRead, TaskRead, UploadResponse
 from app.services.ifc_service import IfcService
 from app.services.storage import LocalStorage
 from app.tasks.ifc_tasks import analyze_ifc, delete_classes, export_glb, export_ifc_subset, optimize_ifc
@@ -56,6 +56,19 @@ def estimate_reduction(project_id: str, mode: str = "safe", db: Session = Depend
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     return ifc_service.estimate_reduction(project.file_size, mode)
+
+
+@router.get("/{project_id}/geometry", response_model=GeometryResponse)
+def get_geometry(project_id: str, limit: int = 80, classes: str | None = None, db: Session = Depends(get_db)) -> GeometryResponse:
+    project = _require_project(db, project_id)
+    class_names = [item.strip() for item in classes.split(",")] if classes else None
+    return ifc_service.geometry(
+        project_id=project.id,
+        source=storage.path_for_key(project.storage_key),
+        cache_dir=storage.settings.cache_dir,
+        limit=limit,
+        class_names=class_names,
+    )
 
 
 @router.post("/{project_id}/optimize", response_model=TaskRead)

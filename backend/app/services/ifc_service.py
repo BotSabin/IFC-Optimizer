@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import random
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
-from app.models.schemas import AnalysisResult, ClassStat
+from app.models.schemas import AnalysisResult, ClassStat, GeometryMesh, GeometryResponse
 
 CORE_CLASSES = [
     "IfcWall",
@@ -90,6 +91,35 @@ class IfcService:
         target.write_bytes(b"glTF placeholder: connect IfcOpenShell geometry serializer in production.\n")
         return {"output": str(target), "preserves_colors": True, "preserves_hierarchy": True}
 
+    def geometry(self, project_id: str, source: Path, cache_dir: Path, limit: int = 80, class_names: list[str] | None = None) -> GeometryResponse:
+        limit = max(1, min(limit, 400))
+        cache_path = self._geometry_cache_path(project_id, source, cache_dir, limit, class_names)
+        if cache_path.exists():
+            payload = json.loads(cache_path.read_text())
+            return GeometryResponse(**payload)
+
+        if source.stat().st_size > 80 * 1024 * 1024:
+            return GeometryResponse(
+                project_id=project_id,
+                source="pending-cache",
+                generated=False,
+                mesh_count=0,
+                limit=limit,
+                meshes=[],
+            )
+
+        meshes = self._extract_ifc_geometry(source, limit=limit, class_names=class_names)
+        response = GeometryResponse(
+            project_id=project_id,
+            source="ifcopenshell",
+            generated=True,
+            mesh_count=len(meshes),
+            limit=limit,
+            meshes=meshes,
+        )
+        cache_path.write_text(response.model_dump_json())
+        return response
+
     def _analyze_with_ifcopenshell(self, path: Path, ifcopenshell_module) -> AnalysisResult:
         model = ifcopenshell_module.open(str(path))
         schema = model.schema
@@ -125,6 +155,96 @@ class IfcService:
             quantity_count=quantity_count,
             classes=classes,
         )
+
+    def _extract_ifc_geometry(self, path: Path, limit: int, class_names: list[str] | None) -> list[GeometryMesh]:
+        import ifcopenshell  # type: ignore
+        import ifcopenshell.geom  # type: ignore
+
+        model = ifcopenshell.open(str(path))
+        settings = ifcopenshell.geom.settings()
+        settings.set(settings.USE_WORLD_COORDS, True)
+
+        requested = set(class_names or [])
+        products = self._geometry_candidates(model, requested)
+        meshes: list[GeometryMesh] = []
+        for product in products:
+            if len(meshes) >= limit:
+                break
+            try:
+                shape = ifcopenshell.geom.create_shape(settings, product)
+            except Exception:
+                continue
+            geometry = shape.geometry
+            positions = [round(float(value), 4) for value in geometry.verts]
+            indices = [int(value) for value in geometry.faces]
+            if len(positions) < 9 or len(indices) < 3:
+                continue
+            class_name = product.is_a()
+            meshes.append(
+                GeometryMesh(
+                    step_id=int(product.id()),
+                    global_id=getattr(product, "GlobalId", None),
+                    name=getattr(product, "Name", None),
+                    class_name=class_name,
+                    color=self._class_color(class_name),
+                    positions=positions,
+                    indices=indices,
+                )
+            )
+        return meshes
+
+    def _geometry_candidates(self, model, requested: set[str]):
+        priority = [
+            "IfcWall",
+            "IfcWallStandardCase",
+            "IfcSlab",
+            "IfcBeam",
+            "IfcColumn",
+            "IfcDoor",
+            "IfcWindow",
+            "IfcPipeSegment",
+            "IfcDuctSegment",
+            "IfcMechanicalFastener",
+            "IfcBuildingElementProxy",
+        ]
+        seen: set[int] = set()
+        for class_name in [*requested, *priority]:
+            try:
+                items = model.by_type(class_name)
+            except Exception:
+                continue
+            for item in items:
+                if item.id() in seen or not getattr(item, "Representation", None):
+                    continue
+                seen.add(item.id())
+                yield item
+        for item in model.by_type("IfcProduct"):
+            if item.id() in seen or not getattr(item, "Representation", None):
+                continue
+            seen.add(item.id())
+            yield item
+
+    def _geometry_cache_path(self, project_id: str, source: Path, cache_dir: Path, limit: int, class_names: list[str] | None) -> Path:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        stat = source.stat()
+        class_key = "-".join(sorted(class_names or ["all"]))
+        digest = hashlib.sha1(f"{source.name}:{stat.st_mtime_ns}:{limit}:{class_key}".encode()).hexdigest()[:16]
+        return cache_dir / f"{project_id}-{digest}.geometry.json"
+
+    def _class_color(self, class_name: str) -> str:
+        colors = {
+            "IfcPipeSegment": "#2f80ed",
+            "IfcDuctSegment": "#27ae60",
+            "IfcWall": "#9ca3af",
+            "IfcWallStandardCase": "#9ca3af",
+            "IfcSlab": "#b8b8b8",
+            "IfcBeam": "#f59e0b",
+            "IfcColumn": "#d97706",
+            "IfcMechanicalFastener": "#a78bfa",
+            "IfcDoor": "#c084fc",
+            "IfcWindow": "#67e8f9",
+        }
+        return colors.get(class_name, "#94a3b8")
 
     def _streaming_step_analysis(self, path: Path) -> AnalysisResult:
         size = max(path.stat().st_size, 1)

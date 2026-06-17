@@ -10,7 +10,8 @@ import { UploadPanel } from "./components/UploadPanel";
 import { Viewer } from "./components/Viewer";
 import { classColors, initialClasses, logs as seedLogs, summary as demoSummary } from "./data/demoModel";
 import { apiUrl } from "./lib/api";
-import { AnalysisSummary, IfcClassStat, IfcElement, OptimizationMode, TaskLog } from "./types/bim";
+import { extractLocalIfcGeometry } from "./lib/webIfcGeometry";
+import { AnalysisSummary, GeometryMesh, GeometryStatus, IfcClassStat, IfcElement, OptimizationMode, TaskLog } from "./types/bim";
 
 type BackendAnalysis = {
   total_entities: number;
@@ -41,6 +42,9 @@ export default function App() {
   const [focused, setFocused] = useState<IfcElement | null>(null);
   const [modelName, setModelName] = useState("Demo coordination model");
   const [isDemo, setIsDemo] = useState(true);
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const [geometry, setGeometry] = useState<GeometryMesh[]>([]);
+  const [geometryStatus, setGeometryStatus] = useState<GeometryStatus>("demo");
 
   const selectedElements = useMemo(() => {
     const generated = buildElements(classes);
@@ -55,7 +59,7 @@ export default function App() {
         const projects = (await response.json()) as BackendProject[];
         const latest = projects.find((project) => project.analysis);
         if (latest?.analysis) {
-          applyAnalysis(latest.filename, latest.analysis);
+          applyAnalysis(latest.id, latest.filename, latest.analysis);
           setLogs((current) => [...current, { time: now(), message: `Loaded latest backend model: ${latest.filename}` }]);
         }
       } catch {
@@ -65,10 +69,13 @@ export default function App() {
     loadLatestProject();
   }, []);
 
-  function applyAnalysis(filename: string, analysis: BackendAnalysis) {
+  function applyAnalysis(nextProjectId: string, filename: string, analysis: BackendAnalysis) {
     const nextClasses = mapClasses(analysis);
+    setProjectId(nextProjectId);
     setModelName(filename);
     setIsDemo(false);
+    setGeometry([]);
+    setGeometryStatus("idle");
     setSummary({
       totalEntities: analysis.total_entities,
       totalProducts: analysis.total_products,
@@ -81,6 +88,59 @@ export default function App() {
     });
     setClasses(nextClasses);
     setSelectedClasses(nextClasses.filter((item) => item.geometry > 0).slice(0, 2).map((item) => item.name));
+  }
+
+  useEffect(() => {
+    if (!projectId || isDemo || summary.fileSize > 80 * 1024 * 1024) return;
+    loadGeometryPreview();
+  }, [projectId, isDemo, summary.fileSize]);
+
+  async function loadGeometryPreview() {
+    if (!projectId) return;
+    const controller = new AbortController();
+    try {
+      setGeometryStatus("loading");
+      setLogs((current) => [...current, { time: now(), message: "Generating real IFC geometry preview" }]);
+      const selected = classes.filter((item) => item.geometry > 0).slice(0, 4).map((item) => item.name).join(",");
+      const timeout = window.setTimeout(() => controller.abort(), 90000);
+      const response = await fetch(apiUrl(`/api/v1/projects/${projectId}/geometry?limit=40&classes=${encodeURIComponent(selected)}`), {
+        cache: "no-store",
+        signal: controller.signal
+      });
+      window.clearTimeout(timeout);
+      if (!response.ok) throw new Error(await response.text());
+      const payload = await response.json();
+      setGeometry(payload.meshes ?? []);
+      setGeometryStatus(payload.meshes?.length ? "ready" : "empty");
+      setLogs((current) => [...current, { time: now(), message: `Loaded ${payload.mesh_count} real IFC geometry meshes` }]);
+    } catch (error) {
+      setGeometry([]);
+      setGeometryStatus("failed");
+      setLogs((current) => [
+        ...current,
+        {
+          time: now(),
+          message: error instanceof Error && error.name === "AbortError" ? "Geometry generation timed out; use worker cache for this model size" : "Geometry endpoint failed"
+        }
+      ]);
+    }
+  }
+
+  async function loadLocalGeometryPreview(file: File) {
+    try {
+      setGeometry([]);
+      setGeometryStatus("loading");
+      setLogs((current) => [...current, { time: now(), message: "Opening IFC locally with web-ifc" }]);
+      const meshes = await extractLocalIfcGeometry(file, (message) => {
+        setLogs((current) => [...current.slice(-80), { time: now(), message }]);
+      });
+      setGeometry(meshes);
+      setGeometryStatus(meshes.length ? "ready" : "empty");
+      setLogs((current) => [...current, { time: now(), message: `Rendered ${meshes.length} local IFC geometry meshes` }]);
+    } catch (error) {
+      setGeometryStatus("failed");
+      setLogs((current) => [...current, { time: now(), message: error instanceof Error ? error.message : "Local IFC geometry failed" }]);
+    }
   }
 
 
@@ -128,7 +188,8 @@ export default function App() {
       const payload = await response.json();
       const analysis = payload.project.analysis as BackendAnalysis | null;
       if (analysis) {
-        applyAnalysis(payload.project.filename, analysis);
+        applyAnalysis(payload.project.id, payload.project.filename, analysis);
+        window.setTimeout(() => loadLocalGeometryPreview(file), 50);
       } else {
         setLogs((current) => [...current, { time: now(), message: "Upload completed but backend returned no analysis payload" }]);
       }
@@ -174,7 +235,15 @@ export default function App() {
           <ElementBrowser elements={selectedElements} classFilter={selectedClasses} onZoom={zoomToElement} />
           <OptimizerPanel mode={mode} fileSize={summary.fileSize} />
         </aside>
-        <Viewer classes={classes} focusedElement={focused} modelName={modelName} isDemo={isDemo} />
+        <Viewer
+          classes={classes}
+          focusedElement={focused}
+          modelName={modelName}
+          isDemo={isDemo}
+          geometry={geometry}
+          geometryStatus={geometryStatus}
+          onRequestGeometry={loadGeometryPreview}
+        />
       </div>
       <BottomConsole logs={logs} progress={progress} />
     </div>

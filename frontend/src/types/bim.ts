@@ -33,3 +33,14 @@ export type TaskLog = {
   message: string;
 };
 
+export type GeometryMesh = {
+  step_id: number;
+  global_id: string | null;
+  name: string | null;
+  class_name: string;
+  color: string;
+  positions: number[];
+  indices: number[];
+};
+
+export type GeometryStatus = "demo" | "idle" | "loading" | "ready" | "empty" | "failed";

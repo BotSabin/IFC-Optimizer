@@ -61,3 +61,21 @@ class ExportRequest(BaseModel):
     classes: list[str] | None = None
     element_ids: list[int] | None = None
 
+
+class GeometryMesh(BaseModel):
+    step_id: int
+    global_id: str | None = None
+    name: str | None = None
+    class_name: str
+    color: str
+    positions: list[float]
+    indices: list[int]
+
+
+class GeometryResponse(BaseModel):
+    project_id: str
+    source: str
+    generated: bool
+    mesh_count: int
+    limit: int
+    meshes: list[GeometryMesh]
