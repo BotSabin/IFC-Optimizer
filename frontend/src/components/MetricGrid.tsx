@@ -18,9 +18,9 @@ export function MetricGrid({ summary }: Props) {
   ];
 
   return (
-    <div className="grid grid-cols-2 gap-2 p-3 border-b border-line">
+    <div className="grid grid-cols-2 gap-2 p-2 border-b border-line">
       {items.map(([label, value]) => (
-        <div key={label} className="bg-panel2 border border-line p-2 min-h-14">
+        <div key={label} className="bg-panel2 border border-line p-2 min-h-12">
           <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
           <div className="text-base font-semibold text-slate-100">{value}</div>
         </div>
@@ -28,4 +28,3 @@ export function MetricGrid({ summary }: Props) {
     </div>
   );
 }
-

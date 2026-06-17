@@ -6,9 +6,11 @@ import { compact } from "../lib/format";
 type Props = {
   classes: IfcClassStat[];
   focusedElement: IfcElement | null;
+  modelName: string;
+  isDemo: boolean;
 };
 
-export function Viewer({ classes, focusedElement }: Props) {
+export function Viewer({ classes, focusedElement, modelName, isDemo }: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -85,12 +87,21 @@ export function Viewer({ classes, focusedElement }: Props) {
     <main className="relative min-w-0 min-h-0 bg-[#0d1117]">
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
       <div className="absolute left-4 top-4 flex flex-wrap gap-2 text-xs">
+        <span className={`border px-2 py-1 ${isDemo ? "border-warn bg-amber-950/85 text-amber-100" : "border-ok bg-emerald-950/85 text-emerald-100"}`}>
+          {isDemo ? "Demo model" : "Backend model"}
+        </span>
         <span className="border border-line bg-shell/85 px-2 py-1 text-slate-300">Streaming geometry</span>
         <span className="border border-line bg-shell/85 px-2 py-1 text-slate-300">Frustum culling</span>
         <span className="border border-line bg-shell/85 px-2 py-1 text-slate-300">LOD active</span>
         <span className="border border-line bg-shell/85 px-2 py-1 text-slate-300">Lazy chunks</span>
       </div>
       <div className="absolute right-4 top-4 w-64 border border-line bg-shell/90 p-3 text-xs text-slate-300">
+        <div className="mb-2 border-b border-line pb-2">
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">Active model</div>
+          <div className="truncate text-sm font-semibold text-white" title={modelName}>
+            {modelName}
+          </div>
+        </div>
         <div className="flex justify-between">
           <span>Visible classes</span>
           <span className="text-white">{visibleClasses}</span>
@@ -112,4 +123,3 @@ export function Viewer({ classes, focusedElement }: Props) {
     </main>
   );
 }
-

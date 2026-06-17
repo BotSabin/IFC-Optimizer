@@ -18,12 +18,12 @@ export function ElementBrowser({ elements, classFilter, onZoom }: Props) {
   }, [classFilter, elements, query]);
 
   return (
-    <section className="h-[38%] min-h-52 border-t border-line flex flex-col">
-      <div className="h-9 px-3 border-b border-line flex items-center justify-between">
+    <section className="min-h-0 overflow-hidden border-t border-line flex flex-col">
+      <div className="h-9 shrink-0 px-3 border-b border-line flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wide text-slate-300">Element Browser</span>
         <span className="text-[11px] text-slate-500">{rows.length} elements</span>
       </div>
-      <label className="m-3 h-9 border border-line bg-panel2 flex items-center px-2 gap-2">
+      <label className="mx-3 my-2 h-9 shrink-0 border border-line bg-panel2 flex items-center px-2 gap-2">
         <Search size={15} className="text-slate-500" />
         <input
           className="w-full bg-transparent text-sm text-slate-100 outline-none"
@@ -32,7 +32,7 @@ export function ElementBrowser({ elements, classFilter, onZoom }: Props) {
           placeholder="Search STEP ID, GlobalId, name"
         />
       </label>
-      <div className="overflow-auto text-xs">
+      <div className="min-h-0 overflow-auto text-xs">
         <div className="grid grid-cols-[70px_1.2fr_1fr_1fr] gap-2 px-3 py-2 sticky top-0 bg-panel text-slate-500 uppercase tracking-wide">
           <span>STEP ID</span>
           <span>GlobalId</span>
@@ -56,4 +56,3 @@ export function ElementBrowser({ elements, classFilter, onZoom }: Props) {
     </section>
   );
 }
-

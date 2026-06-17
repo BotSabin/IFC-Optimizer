@@ -7,7 +7,7 @@ type Props = {
 
 export function BottomConsole({ logs, progress }: Props) {
   return (
-    <footer className="h-40 border-t border-line bg-shell flex flex-col">
+    <footer className="h-32 xl:h-40 border-t border-line bg-shell flex flex-col">
       <div className="h-9 px-3 border-b border-line flex items-center gap-4">
         <span className="text-xs font-semibold uppercase tracking-wide text-slate-300">Background Tasks</span>
         <div className="flex-1 h-2 bg-panel2 border border-line">
@@ -25,4 +25,3 @@ export function BottomConsole({ logs, progress }: Props) {
     </footer>
   );
 }
-
