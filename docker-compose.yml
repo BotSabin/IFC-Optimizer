@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ifc_optimizer
+      POSTGRES_USER: ifc
+      POSTGRES_PASSWORD: ifc
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build: ./backend
+    environment:
+      IFC_DATABASE_URL: postgresql+psycopg://ifc:ifc@postgres:5432/ifc_optimizer
+      IFC_REDIS_URL: redis://redis:6379/0
+      IFC_CELERY_ALWAYS_EAGER: "false"
+      IFC_STORAGE_ROOT: /app/storage
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/storage:/app/storage
+
+  worker:
+    build: ./backend
+    command: celery -A app.core.celery_app.celery_app worker --loglevel=info --concurrency=2
+    environment:
+      IFC_DATABASE_URL: postgresql+psycopg://ifc:ifc@postgres:5432/ifc_optimizer
+      IFC_REDIS_URL: redis://redis:6379/0
+      IFC_CELERY_ALWAYS_EAGER: "false"
+      IFC_STORAGE_ROOT: /app/storage
+    depends_on:
+      - backend
+      - redis
+      - postgres
+    volumes:
+      - ./backend/storage:/app/storage
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"
+
+volumes:
+  postgres_data:

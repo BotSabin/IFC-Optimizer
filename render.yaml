@@ -1,0 +1,55 @@
+services:
+  - type: web
+    name: ifc-optimizer-api
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    plan: starter
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: IFC_DATABASE_URL
+        fromDatabase:
+          name: ifc-optimizer-db
+          property: connectionString
+      - key: IFC_REDIS_URL
+        fromService:
+          type: redis
+          name: ifc-optimizer-redis
+          property: connectionString
+      - key: IFC_CELERY_ALWAYS_EAGER
+        value: "false"
+      - key: IFC_STORAGE_ROOT
+        value: /app/storage
+      - key: IFC_CORS_ORIGINS
+        value: http://localhost:5173,http://127.0.0.1:5173
+
+  - type: worker
+    name: ifc-optimizer-worker
+    runtime: docker
+    dockerfilePath: backend/Dockerfile
+    dockerContext: backend
+    plan: starter
+    dockerCommand: celery -A app.core.celery_app.celery_app worker --loglevel=info --concurrency=2
+    envVars:
+      - key: IFC_DATABASE_URL
+        fromDatabase:
+          name: ifc-optimizer-db
+          property: connectionString
+      - key: IFC_REDIS_URL
+        fromService:
+          type: redis
+          name: ifc-optimizer-redis
+          property: connectionString
+      - key: IFC_CELERY_ALWAYS_EAGER
+        value: "false"
+      - key: IFC_STORAGE_ROOT
+        value: /app/storage
+
+  - type: redis
+    name: ifc-optimizer-redis
+    plan: starter
+    ipAllowList: []
+
+databases:
+  - name: ifc-optimizer-db
+    plan: starter

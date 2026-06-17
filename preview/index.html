@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ro">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>IFC Optimizer Pro Web Preview</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #101317;
+        color: #e5edf6;
+        overflow: hidden;
+      }
+      button { font: inherit; border: 0; border-radius: 0; cursor: pointer; }
+      .app { height: 100vh; display: flex; flex-direction: column; }
+      .toolbar {
+        height: 56px; border-bottom: 1px solid #2d3440; background: #101317;
+        display: flex; align-items: center; justify-content: space-between; padding: 0 12px; gap: 12px;
+      }
+      .brand { font-weight: 700; color: #fff; letter-spacing: .02em; white-space: nowrap; }
+      .tools, .right-tools { display: flex; gap: 4px; align-items: center; }
+      .icon {
+        width: 36px; height: 36px; border: 1px solid #2d3440; background: #1f252d; color: #dbe6f3;
+        display: inline-flex; align-items: center; justify-content: center;
+      }
+      .icon:hover, .mode:hover { background: #334155; }
+      .mode-group { display: flex; border: 1px solid #2d3440; overflow: hidden; margin-right: 6px; }
+      .mode { height: 36px; padding: 0 12px; background: #1f252d; color: #cbd5e1; font-size: 12px; text-transform: uppercase; letter-spacing: .06em; }
+      .mode.active { background: #38bdf8; color: #07111f; font-weight: 700; }
+      .layout { flex: 1; min-height: 0; display: grid; grid-template-columns: 360px minmax(0, 1fr); }
+      aside { min-height: 0; border-right: 1px solid #2d3440; background: #171b21; display: flex; flex-direction: column; }
+      .upload { margin: 12px; border: 1px dashed #2d3440; background: #1f252d; padding: 16px; display: flex; gap: 12px; align-items: center; }
+      .upload-badge { width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid #2d3440; color: #38bdf8; background: #101317; }
+      .upload-title { font-weight: 650; color: #f8fafc; font-size: 14px; }
+      .muted { color: #7d8999; font-size: 12px; }
+      .metrics { border-top: 1px solid #2d3440; border-bottom: 1px solid #2d3440; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 12px; }
+      .metric { min-height: 56px; border: 1px solid #2d3440; background: #1f252d; padding: 8px; }
+      .metric span { display: block; color: #8b98a8; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; }
+      .metric strong { display: block; color: #f8fafc; font-size: 17px; margin-top: 3px; }
+      .panel-head { height: 36px; border-bottom: 1px solid #2d3440; padding: 0 12px; display: flex; align-items: center; justify-content: space-between; }
+      .panel-head strong { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #d7e1ee; }
+      .classes { flex: 1; min-height: 0; overflow: auto; }
+      .row {
+        display: grid; grid-template-columns: 22px 1fr 72px 56px 56px; align-items: center; gap: 8px;
+        border-bottom: 1px solid rgba(45,52,64,.72); padding: 8px 12px; color: #cbd5e1; font-size: 13px;
+      }
+      .row.selected { background: rgba(56,189,248,.14); color: #fff; }
+      .swatch { width: 13px; height: 13px; }
+      .num { text-align: right; color: #8b98a8; font-size: 12px; }
+      .tiny-actions { display: flex; justify-content: flex-end; gap: 2px; }
+      .tiny { width: 26px; height: 26px; background: transparent; color: #cbd5e1; }
+      .tiny:hover { background: #334155; }
+      .browser { height: 240px; border-top: 1px solid #2d3440; display: flex; flex-direction: column; }
+      .search { margin: 12px; height: 36px; border: 1px solid #2d3440; background: #1f252d; display: flex; align-items: center; gap: 8px; padding: 0 9px; color: #7d8999; }
+      .search input { width: 100%; background: transparent; color: #e5edf6; border: 0; outline: 0; }
+      .table { overflow: auto; font-size: 12px; }
+      .trow { display: grid; grid-template-columns: 70px 1.2fr 1fr 1fr; gap: 8px; padding: 8px 12px; border-top: 1px solid rgba(45,52,64,.62); color: #cbd5e1; }
+      .trow.head { position: sticky; top: 0; background: #171b21; color: #7d8999; text-transform: uppercase; letter-spacing: .06em; }
+      .optimizer { border-top: 1px solid #2d3440; padding: 12px; background: #171b21; }
+      .optim-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; }
+      .optim-card { border: 1px solid #2d3440; background: #1f252d; padding: 8px; }
+      .optim-card b { display: block; margin-top: 4px; font-size: 18px; color: #f8fafc; }
+      .queue { margin-top: 10px; width: 100%; height: 36px; background: #38bdf8; color: #07111f; font-weight: 750; }
+      main { min-width: 0; min-height: 0; position: relative; background: radial-gradient(circle at 50% 40%, #15202c 0, #0d1117 45%, #080b10 100%); overflow: hidden; }
+      .viewer-grid {
+        position: absolute; inset: 0; opacity: .6;
+        background-image:
+          linear-gradient(rgba(76,94,116,.22) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(76,94,116,.22) 1px, transparent 1px);
+        background-size: 38px 38px; transform: perspective(700px) rotateX(62deg) translateY(120px) scale(1.5);
+      }
+      .model { position: absolute; inset: 0; display: grid; place-items: center; transform-style: preserve-3d; perspective: 900px; }
+      .stack { position: relative; width: min(620px, 68vw); height: 360px; transform: rotateX(58deg) rotateZ(-28deg); }
+      .beam {
+        position: absolute; height: 22px; border: 1px solid rgba(255,255,255,.2); box-shadow: 0 20px 48px rgba(0,0,0,.38);
+        opacity: .9;
+      }
+      .beam:nth-child(1) { width: 420px; left: 72px; top: 70px; background: #9ca3af; }
+      .beam:nth-child(2) { width: 520px; left: 24px; top: 120px; background: #2f80ed; }
+      .beam:nth-child(3) { width: 470px; left: 92px; top: 172px; background: #27ae60; }
+      .beam:nth-child(4) { width: 360px; left: 150px; top: 224px; background: #f59e0b; }
+      .beam:nth-child(5) { width: 450px; left: 44px; top: 276px; background: #a78bfa; }
+      .tagbar { position: absolute; left: 16px; top: 16px; display: flex; flex-wrap: wrap; gap: 8px; }
+      .tag { border: 1px solid #2d3440; background: rgba(16,19,23,.86); color: #cbd5e1; padding: 5px 8px; font-size: 12px; }
+      .stats { position: absolute; right: 16px; top: 16px; width: 260px; border: 1px solid #2d3440; background: rgba(16,19,23,.9); padding: 12px; font-size: 12px; color: #cbd5e1; }
+      .stats div { display: flex; justify-content: space-between; padding: 4px 0; }
+      .ok { color: #23c55e; }
+      footer { height: 160px; border-top: 1px solid #2d3440; background: #101317; display: flex; flex-direction: column; }
+      .progress-head { height: 36px; border-bottom: 1px solid #2d3440; display: flex; align-items: center; gap: 14px; padding: 0 12px; }
+      .progress-head strong { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; }
+      .bar { flex: 1; height: 8px; border: 1px solid #2d3440; background: #1f252d; }
+      .fill { height: 100%; width: 100%; background: #38bdf8; }
+      .console { flex: 1; overflow: auto; padding: 12px; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #cbd5e1; line-height: 1.8; }
+      .time { color: #7d8999; }
+      @media (max-width: 900px) {
+        .layout { grid-template-columns: 1fr; }
+        aside { display: none; }
+        .tools { display: none; }
+        .stats { width: 220px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="app">
+      <header class="toolbar">
+        <div class="tools">
+          <div class="brand">IFC Optimizer Pro Web</div>
+          <button class="icon" title="Upload IFC">⇪</button>
+          <button class="icon" title="Orbit">⟲</button>
+          <button class="icon" title="First person navigation">⌖</button>
+          <button class="icon" title="Section box">□</button>
+          <button class="icon" title="Measure">⌁</button>
+          <button class="icon" title="Fit selection">◎</button>
+          <button class="icon" title="Reset camera">↺</button>
+          <button class="icon" title="Hide selected">◐</button>
+          <button class="icon" title="Delete selected">✕</button>
+        </div>
+        <div class="right-tools">
+          <div class="mode-group">
+            <button class="mode active">Safe</button>
+            <button class="mode">Medium</button>
+            <button class="mode">Aggressive</button>
+          </div>
+          <button class="icon" title="Export visible classes">⇩</button>
+          <button class="icon" title="Export GLB">GLB</button>
+          <button class="icon" title="Fullscreen">⛶</button>
+        </div>
+      </header>
+      <div class="layout">
+        <aside>
+          <div class="upload">
+            <div class="upload-badge">⇪</div>
+            <div>
+              <div class="upload-title">Drop IFC2X3, IFC4 or IFC4x3</div>
+              <div class="muted">1.16 GB · validation complete · cache ready</div>
+            </div>
+          </div>
+          <div class="metrics">
+            <div class="metric"><span>Entities</span><strong>947.2K</strong></div>
+            <div class="metric"><span>Products</span><strong>88.9K</strong></div>
+            <div class="metric"><span>IFC Classes</span><strong>181</strong></div>
+            <div class="metric"><span>File Size</span><strong>1.2 GB</strong></div>
+            <div class="metric"><span>Geometry</span><strong>88.9K</strong></div>
+            <div class="metric"><span>Triangles</span><strong>20.1M</strong></div>
+            <div class="metric"><span>Properties</span><strong>758.3K</strong></div>
+            <div class="metric"><span>Quantities</span><strong>216.4K</strong></div>
+          </div>
+          <div class="panel-head"><strong>Class Tree</strong><span class="muted">2 selected</span></div>
+          <div class="classes">
+            <div class="row"><span class="swatch" style="background:#9ca3af"></span><span>IfcWall</span><span class="num">8,421</span><span class="num">8,421</span><span class="tiny-actions"><button class="tiny">◉</button><button class="tiny">◎</button></span></div>
+            <div class="row"><span class="swatch" style="background:#b8b8b8"></span><span>IfcSlab</span><span class="num">1,192</span><span class="num">1,192</span><span class="tiny-actions"><button class="tiny">◉</button><button class="tiny">◎</button></span></div>
+            <div class="row"><span class="swatch" style="background:#f59e0b"></span><span>IfcBeam</span><span class="num">3,774</span><span class="num">3,774</span><span class="tiny-actions"><button class="tiny">◉</button><button class="tiny">◎</button></span></div>
+            <div class="row"><span class="swatch" style="background:#d97706"></span><span>IfcColumn</span><span class="num">2,128</span><span class="num">2,128</span><span class="tiny-actions"><button class="tiny">◉</button><button class="tiny">◎</button></span></div>
+            <div class="row selected"><span class="swatch" style="background:#2f80ed"></span><span>IfcPipeSegment</span><span class="num">18,864</span><span class="num">18,864</span><span class="tiny-actions"><button class="tiny">◉</button><button class="tiny">◎</button></span></div>
+            <div class="row selected"><span class="swatch" style="background:#27ae60"></span><span>IfcDuctSegment</span><span class="num">6,420</span><span class="num">6,420</span><span class="tiny-actions"><button class="tiny">◉</button><button class="tiny">◎</button></span></div>
+            <div class="row"><span class="swatch" style="background:#a78bfa"></span><span>IfcMechanicalFastener</span><span class="num">48,112</span><span class="num">48,112</span><span class="tiny-actions"><button class="tiny">◉</button><button class="tiny">◎</button></span></div>
+            <div class="row"><span class="swatch" style="background:#64748b"></span><span>IfcPropertySet</span><span class="num">126,380</span><span class="num">0</span><span class="tiny-actions"><button class="tiny">◉</button><button class="tiny">◎</button></span></div>
+          </div>
+          <div class="browser">
+            <div class="panel-head"><strong>Element Browser</strong><span class="muted">16 elements</span></div>
+            <label class="search">⌕ <input value="Pipe" aria-label="Search" /></label>
+            <div class="table">
+              <div class="trow head"><span>STEP ID</span><span>GlobalId</span><span>Name</span><span>Class</span></div>
+              <div class="trow"><span>120068</span><span>2bM9p0004DqK8x9Y</span><span>PipeSegment-005</span><span>IfcPipeSegment</span></div>
+              <div class="trow"><span>120221</span><span>2bM9p000dDqK8x9Y</span><span>PipeSegment-014</span><span>IfcPipeSegment</span></div>
+              <div class="trow"><span>120374</span><span>2bM9p0016DqK8x9Y</span><span>PipeSegment-023</span><span>IfcPipeSegment</span></div>
+            </div>
+          </div>
+          <div class="optimizer">
+            <div class="panel-head" style="padding:0;border:0;height:auto"><strong>IFC Optimizer</strong></div>
+            <div class="optim-grid">
+              <div class="optim-card"><span class="muted">Reduction</span><b style="color:#f59e0b">18%</b></div>
+              <div class="optim-card"><span class="muted">Estimated size</span><b>976 MB</b></div>
+            </div>
+            <button class="queue">Queue Optimization</button>
+          </div>
+        </aside>
+        <main>
+          <div class="viewer-grid"></div>
+          <div class="tagbar">
+            <span class="tag">Streaming geometry</span>
+            <span class="tag">Frustum culling</span>
+            <span class="tag">LOD active</span>
+            <span class="tag">Lazy chunks</span>
+          </div>
+          <div class="stats">
+            <div><span>Visible classes</span><b>9</b></div>
+            <div><span>Visible triangles</span><b>20.1M</b></div>
+            <div><span>Cache</span><b class="ok">project.ifc.cache</b></div>
+          </div>
+          <div class="model">
+            <div class="stack">
+              <div class="beam"></div><div class="beam"></div><div class="beam"></div><div class="beam"></div><div class="beam"></div>
+            </div>
+          </div>
+        </main>
+      </div>
+      <footer>
+        <div class="progress-head"><strong>Background Tasks</strong><div class="bar"><div class="fill"></div></div><span class="muted">100%</span></div>
+        <div class="console">
+          <div><span class="time">[12:00:01]</span> Opening IFC</div>
+          <div><span class="time">[12:00:05]</span> Reading geometry chunks</div>
+          <div><span class="time">[12:00:30]</span> Analyzing classes and quantities</div>
+          <div><span class="time">[12:01:00]</span> Geometry cache ready: project.ifc.cache</div>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>
