@@ -1,5 +1,7 @@
 import { useEffect, useRef } from "react";
 import * as THREE from "three";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { Minimize2 } from "lucide-react";
 import { GeometryMesh, GeometryStatus, IfcClassStat, IfcElement } from "../types/bim";
 import { compact } from "../lib/format";
 
@@ -11,9 +13,23 @@ type Props = {
   geometry: GeometryMesh[];
   geometryStatus: GeometryStatus;
   onRequestGeometry: () => void;
+  onLoadFromBackend: () => void;
+  expanded: boolean;
+  onToggleExpanded: () => void;
 };
 
-export function Viewer({ classes, focusedElement, modelName, isDemo, geometry, geometryStatus, onRequestGeometry }: Props) {
+export function Viewer({
+  classes,
+  focusedElement,
+  modelName,
+  isDemo,
+  geometry,
+  geometryStatus,
+  onRequestGeometry,
+  onLoadFromBackend,
+  expanded,
+  onToggleExpanded
+}: Props) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
   useEffect(() => {
@@ -27,6 +43,9 @@ export function Viewer({ classes, focusedElement, modelName, isDemo, geometry, g
     const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
     camera.position.set(28, 18, 34);
     camera.lookAt(0, 0, 0);
+    const controls = new OrbitControls(camera, canvas);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
 
     scene.add(new THREE.AmbientLight("#ffffff", 0.75));
     const light = new THREE.DirectionalLight("#ffffff", 2.2);
@@ -37,10 +56,10 @@ export function Viewer({ classes, focusedElement, modelName, isDemo, geometry, g
     scene.add(grid);
 
     const group = new THREE.Group();
-    const visibleClassNames = new Set(classes.filter((item) => item.visible).map((item) => item.name));
+    const visibleClassNames = new Set(classes.filter((item) => item.visible).map((item) => item.name.toLowerCase()));
     if (geometry.length > 0) {
       const bounds = new THREE.Box3();
-      geometry.filter((item) => visibleClassNames.has(item.class_name)).forEach((item) => {
+      geometry.filter((item) => visibleClassNames.has(item.class_name.toLowerCase())).forEach((item) => {
         const meshGeometry = new THREE.BufferGeometry();
         meshGeometry.setAttribute("position", new THREE.Float32BufferAttribute(item.positions, 3));
         meshGeometry.setIndex(item.indices);
@@ -54,8 +73,9 @@ export function Viewer({ classes, focusedElement, modelName, isDemo, geometry, g
         const size = bounds.getSize(new THREE.Vector3());
         const center = bounds.getCenter(new THREE.Vector3());
         const maxAxis = Math.max(size.x, size.y, size.z, 1);
-        group.position.sub(center);
-        group.scale.setScalar(34 / maxAxis);
+        const scale = 34 / maxAxis;
+        group.scale.setScalar(scale);
+        group.position.copy(center).multiplyScalar(-scale);
       }
     } else if (isDemo) {
       const visible = classes.filter((item) => item.visible && item.geometry > 0);
@@ -86,14 +106,17 @@ export function Viewer({ classes, focusedElement, modelName, isDemo, geometry, g
     const animate = () => {
       frame = requestAnimationFrame(animate);
       if (isDemo) group.rotation.y += 0.0015;
+      controls.update();
       renderer.render(scene, camera);
     };
     resize();
     animate();
-    window.addEventListener("resize", resize);
+    const resizeObserver = new ResizeObserver(resize);
+    resizeObserver.observe(canvas);
     return () => {
       cancelAnimationFrame(frame);
-      window.removeEventListener("resize", resize);
+      resizeObserver.disconnect();
+      controls.dispose();
       renderer.dispose();
       group.traverse((child) => {
         if (child instanceof THREE.Mesh) {
@@ -109,7 +132,7 @@ export function Viewer({ classes, focusedElement, modelName, isDemo, geometry, g
   const visibleClasses = classes.filter((item) => item.visible).length;
 
   return (
-    <main className="relative min-w-0 min-h-0 bg-[#0d1117]">
+    <main id="ifc-viewer" className="relative h-full min-w-0 min-h-0 bg-[#0d1117] fullscreen:h-screen fullscreen:w-screen">
       <canvas ref={canvasRef} className="absolute inset-0 h-full w-full" />
       <div className="absolute left-4 top-4 flex flex-wrap gap-2 text-xs">
         <span className={`border px-2 py-1 ${isDemo ? "border-warn bg-amber-950/85 text-amber-100" : "border-ok bg-emerald-950/85 text-emerald-100"}`}>
@@ -139,18 +162,32 @@ export function Viewer({ classes, focusedElement, modelName, isDemo, geometry, g
           <span>Cache</span>
           <span className={geometryStatus === "ready" ? "text-ok" : "text-warn"}>{geometryLabel(geometryStatus)}</span>
         </div>
-        {!isDemo && geometryStatus !== "loading" && geometryStatus !== "ready" && (
-          <button className="mt-3 h-8 w-full bg-brand text-xs font-semibold text-slate-950 hover:bg-sky-300" onClick={onRequestGeometry}>
-            Generate Geometry Preview
+        {expanded && (
+          <button
+            className="mt-3 h-8 w-full border border-line bg-panel2 inline-flex items-center justify-center gap-2 text-xs font-semibold text-slate-200 hover:bg-slate-700"
+            onClick={onToggleExpanded}
+          >
+            <Minimize2 size={14} />
+            Exit Fullscreen
           </button>
+        )}
+        {!isDemo && geometryStatus !== "loading" && geometryStatus !== "ready" && (
+          <div className="mt-3 grid gap-2">
+            <button className="h-8 w-full bg-brand text-xs font-semibold text-slate-950 hover:bg-sky-300" onClick={onLoadFromBackend}>
+              Load IFC From Backend
+            </button>
+            <button className="h-8 w-full border border-line bg-panel2 text-xs font-semibold text-slate-200 hover:bg-slate-700" onClick={onRequestGeometry}>
+              Use Server Geometry Cache
+            </button>
+          </div>
         )}
       </div>
       {!isDemo && geometry.length === 0 && (
         <div className="absolute inset-x-4 bottom-4 border border-line bg-shell/90 px-4 py-3 text-sm text-slate-300">
-          {geometryStatus === "loading" && "Generating real IFC geometry preview from IfcOpenShell..."}
+          {geometryStatus === "loading" && "Downloading and generating real IFC geometry. Large models can take several minutes..."}
           {geometryStatus === "failed" && "Geometry preview is not ready yet. Analysis data is real; retry after cache generation or lower the class selection."}
           {geometryStatus === "empty" && "No renderable geometry was returned for the selected preview limit."}
-          {geometryStatus === "idle" && "Waiting to request real IFC geometry preview."}
+          {geometryStatus === "idle" && "The IFC is stored in the backend. Load it to generate the real viewer preview."}
         </div>
       )}
       {focusedElement && (

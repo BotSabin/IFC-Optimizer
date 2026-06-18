@@ -4,7 +4,11 @@ import { GeometryMesh } from "../types/bim";
 
 const PREVIEW_LIMIT = 160;
 
-export async function extractLocalIfcGeometry(file: File, onProgress?: (message: string) => void): Promise<GeometryMesh[]> {
+export async function extractLocalIfcGeometry(
+  file: File,
+  onProgress?: (message: string) => void,
+  preferredClasses: string[] = []
+): Promise<GeometryMesh[]> {
   const data = new Uint8Array(await file.arrayBuffer());
   const ifc = new IfcAPI();
   await ifc.Init(() => wasmUrl, true);
@@ -20,13 +24,13 @@ export async function extractLocalIfcGeometry(file: File, onProgress?: (message:
 
   const meshes: GeometryMesh[] = [];
   try {
-    ifc.StreamAllMeshes(modelID, (flatMesh, index, total) => {
-      if (meshes.length >= PREVIEW_LIMIT) {
-        flatMesh.delete();
-        return;
-      }
+    const ids = collectPreviewIds(ifc, modelID, preferredClasses);
+    onProgress?.(`Selected ${ids.length} IFC products for the geometry preview`);
+    const consumeMesh = (flatMesh: Parameters<Parameters<typeof ifc.StreamMeshes>[2]>[0], index: number, total: number) => {
+      if (meshes.length >= PREVIEW_LIMIT) return;
       if (index % 25 === 0) onProgress?.(`Streaming IFC mesh ${index + 1}/${total}`);
-      const className = ifc.GetNameFromTypeCode(ifc.GetLineType(modelID, flatMesh.expressID)) || "IfcProduct";
+      const rawClassName = ifc.GetNameFromTypeCode(ifc.GetLineType(modelID, flatMesh.expressID)) || "IfcProduct";
+      const className = preferredClasses.find((item) => item.toLowerCase() === rawClassName.toLowerCase()) || rawClassName;
       for (let i = 0; i < flatMesh.geometries.size(); i += 1) {
         if (meshes.length >= PREVIEW_LIMIT) break;
         const placed = flatMesh.geometries.get(i);
@@ -36,10 +40,11 @@ export async function extractLocalIfcGeometry(file: File, onProgress?: (message:
         const positions = transformVertexData(rawVertices, placed.flatTransformation);
         const indices = Array.from(rawIndices);
         if (positions.length >= 9 && indices.length >= 3) {
+          const line = ifc.GetLine(modelID, flatMesh.expressID, false);
           meshes.push({
             step_id: flatMesh.expressID,
-            global_id: String(ifc.GetGuidFromExpressId(modelID, flatMesh.expressID) ?? ""),
-            name: null,
+            global_id: readIfcValue(line?.GlobalId) || String(ifc.GetGuidFromExpressId(modelID, flatMesh.expressID) ?? ""),
+            name: readIfcValue(line?.Name),
             class_name: className,
             color: toColor(placed.color),
             positions,
@@ -48,12 +53,56 @@ export async function extractLocalIfcGeometry(file: File, onProgress?: (message:
         }
         geometry.delete();
       }
-      flatMesh.delete();
-    });
+    };
+    if (ids.length) ifc.StreamMeshes(modelID, ids, consumeMesh);
+    else ifc.StreamAllMeshes(modelID, consumeMesh);
   } finally {
     ifc.CloseModel(modelID);
   }
   return meshes;
+}
+
+function collectPreviewIds(ifc: IfcAPI, modelID: number, preferredClasses: string[]): number[] {
+  const ids: number[] = [];
+  const seen = new Set<number>();
+  const availableTypes = ifc.GetAllTypesOfModel(modelID);
+  const priority = [
+    ...preferredClasses,
+    "IfcWall",
+    "IfcWallStandardCase",
+    "IfcSlab",
+    "IfcBeam",
+    "IfcColumn",
+    "IfcDoor",
+    "IfcWindow",
+    "IfcPipeSegment",
+    "IfcDuctSegment",
+    "IfcMechanicalFastener",
+    "IfcElementAssembly",
+    "IfcBuildingElementProxy"
+  ];
+
+  for (const className of priority) {
+    const type = availableTypes.find((item) => item.typeName.toLowerCase() === className.toLowerCase());
+    if (!type) continue;
+    const lineIds = ifc.GetLineIDsWithType(modelID, type.typeID, false);
+    const perClassLimit = Math.max(12, Math.ceil(PREVIEW_LIMIT / Math.max(priority.length, 1)));
+    for (let index = 0; index < lineIds.size() && index < perClassLimit; index += 1) {
+      const id = lineIds.get(index);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      ids.push(id);
+      if (ids.length >= PREVIEW_LIMIT) return ids;
+    }
+  }
+  return ids;
+}
+
+function readIfcValue(value: unknown): string | null {
+  if (!value) return null;
+  if (typeof value === "string") return value;
+  if (typeof value === "object" && "value" in value) return String((value as { value: unknown }).value ?? "") || null;
+  return null;
 }
 
 function transformVertexData(vertices: Float32Array, matrix: number[]): number[] {
@@ -78,4 +127,3 @@ function toColor(color: { x: number; y: number; z: number; w: number }): string 
   const b = Math.round(Math.max(0, Math.min(1, color.z)) * 255).toString(16).padStart(2, "0");
   return `#${r}${g}${b}`;
 }
-

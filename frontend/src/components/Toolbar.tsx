@@ -1,6 +1,5 @@
 import {
   BoxSelect,
-  Crosshair,
   Download,
   EyeOff,
   FileDown,
@@ -23,13 +22,14 @@ type Props = {
   onHideSelected: () => void;
   onDeleteSelected: () => void;
   onExportVisible: () => void;
+  onFullscreen: () => void;
   busy: boolean;
 };
 
 const iconButton =
   "h-9 w-9 inline-flex items-center justify-center border border-line bg-panel2 text-slate-200 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-brand";
 
-export function Toolbar({ mode, onModeChange, onUploadClick, onHideSelected, onDeleteSelected, onExportVisible, busy }: Props) {
+export function Toolbar({ mode, onModeChange, onUploadClick, onHideSelected, onDeleteSelected, onExportVisible, onFullscreen, busy }: Props) {
   return (
     <header className="h-14 border-b border-line bg-shell px-3 flex items-center justify-between gap-3">
       <div className="flex items-center gap-3 min-w-0">
@@ -87,7 +87,7 @@ export function Toolbar({ mode, onModeChange, onUploadClick, onHideSelected, onD
         <button className={iconButton} title="Export GLB">
           <Download size={17} />
         </button>
-        <button className={iconButton} title="Fullscreen viewer">
+        <button className={iconButton} title="Fullscreen viewer" onClick={onFullscreen}>
           <Maximize size={17} />
         </button>
       </div>

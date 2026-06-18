@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent } from "react";
 import { BottomConsole } from "./components/BottomConsole";
 import { ClassTree } from "./components/ClassTree";
@@ -47,11 +47,32 @@ export default function App() {
   const [geometry, setGeometry] = useState<GeometryMesh[]>([]);
   const [geometryStatus, setGeometryStatus] = useState<GeometryStatus>("demo");
   const [exportBusy, setExportBusy] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(400);
+  const [classPanelHeight, setClassPanelHeight] = useState(260);
+  const [elementPanelHeight, setElementPanelHeight] = useState(260);
+  const [consoleHeight, setConsoleHeight] = useState(150);
+  const [viewerExpanded, setViewerExpanded] = useState(false);
+  const backendLoadStarted = useRef<string | null>(null);
 
   const selectedElements = useMemo(() => {
+    if (geometry.length) {
+      const realElements = new Map<number, IfcElement>();
+      geometry.forEach((item) => {
+        if (!realElements.has(item.step_id)) {
+          realElements.set(item.step_id, {
+            stepId: item.step_id,
+            globalId: item.global_id || `STEP-${item.step_id}`,
+            name: item.name || `${item.class_name}-${item.step_id}`,
+            className: item.class_name
+          });
+        }
+      });
+      const rows = [...realElements.values()];
+      return selectedClasses.length ? rows.filter((item) => selectedClasses.includes(item.className)) : rows;
+    }
     const generated = buildElements(classes);
     return selectedClasses.length ? generated.filter((item) => selectedClasses.includes(item.className)) : generated;
-  }, [classes, selectedClasses]);
+  }, [classes, geometry, selectedClasses]);
 
   useEffect(() => {
     async function loadLatestProject() {
@@ -97,6 +118,12 @@ export default function App() {
     loadGeometryPreview();
   }, [projectId, isDemo, summary.fileSize]);
 
+  useEffect(() => {
+    if (!projectId || isDemo || geometry.length || backendLoadStarted.current === projectId) return;
+    backendLoadStarted.current = projectId;
+    window.setTimeout(() => loadBackendIfcGeometry(), 350);
+  }, [projectId, isDemo]);
+
   async function loadGeometryPreview() {
     if (!projectId) return;
     const controller = new AbortController();
@@ -133,15 +160,45 @@ export default function App() {
       setGeometry([]);
       setGeometryStatus("loading");
       setLogs((current) => [...current, { time: now(), message: "Opening IFC locally with web-ifc" }]);
+      const preferredClasses = classes.filter((item) => item.geometry > 0).slice(0, 8).map((item) => item.name);
       const meshes = await extractLocalIfcGeometry(file, (message) => {
         setLogs((current) => [...current.slice(-80), { time: now(), message }]);
-      });
+      }, preferredClasses);
       setGeometry(meshes);
       setGeometryStatus(meshes.length ? "ready" : "empty");
       setLogs((current) => [...current, { time: now(), message: `Rendered ${meshes.length} local IFC geometry meshes` }]);
     } catch (error) {
       setGeometryStatus("failed");
       setLogs((current) => [...current, { time: now(), message: error instanceof Error ? error.message : "Local IFC geometry failed" }]);
+    }
+  }
+
+  async function loadBackendIfcGeometry() {
+    if (!projectId || geometryStatus === "loading") return;
+    try {
+      setGeometry([]);
+      setGeometryStatus("loading");
+      setProgress(5);
+      setLogs((current) => [
+        ...current,
+        { time: now(), message: `Downloading ${modelName} from backend (${bytes(summary.fileSize)})` }
+      ]);
+      const response = await apiFetch(`/api/v1/projects/${projectId}/source`, { cache: "no-store" });
+      if (!response.ok) throw new Error(await response.text());
+      setProgress(30);
+      const blob = await response.blob();
+      setProgress(48);
+      setLogs((current) => [...current, { time: now(), message: "Backend IFC downloaded; opening real geometry with web-ifc" }]);
+      await loadLocalGeometryPreview(new File([blob], modelName, { type: "application/x-step" }));
+      setProgress(100);
+    } catch (error) {
+      backendLoadStarted.current = null;
+      setProgress(100);
+      setGeometryStatus("failed");
+      setLogs((current) => [
+        ...current,
+        { time: now(), message: error instanceof Error ? `Backend IFC load failed: ${error.message}` : "Backend IFC load failed" }
+      ]);
     }
   }
 
@@ -288,6 +345,10 @@ export default function App() {
     window.setTimeout(() => setFocused(null), 2600);
   }
 
+  function toggleFullscreen() {
+    setViewerExpanded((value) => !value);
+  }
+
   return (
     <div className="h-screen w-screen overflow-hidden bg-shell text-slate-100 flex flex-col">
       <Toolbar
@@ -297,36 +358,56 @@ export default function App() {
         onHideSelected={hideSelectedClasses}
         onDeleteSelected={deleteSelectedClasses}
         onExportVisible={exportVisibleClasses}
+        onFullscreen={toggleFullscreen}
         busy={exportBusy}
       />
       <div className="hidden">
         <input id="ifc-upload-proxy" type="file" accept=".ifc,.ifczip" onChange={(event) => event.target.files?.[0] && handleFile(event.target.files[0])} />
       </div>
-      <div className="flex-1 min-h-0 grid grid-cols-[360px_minmax(0,1fr)] max-lg:grid-cols-1">
-        <aside className="min-h-0 border-r border-line bg-panel grid grid-rows-[auto_auto_minmax(120px,1fr)_minmax(180px,0.85fr)_auto] overflow-hidden max-lg:hidden">
-          <UploadPanel onFile={handleFile} />
-          <MetricGrid summary={summary} />
-          <ClassTree
-            classes={classes}
-            selected={selectedClasses}
-            onSelect={handleClassSelect}
-            onToggleVisibility={toggleClassVisibility}
-            onIsolate={isolateClass}
-          />
-          <ElementBrowser elements={selectedElements} classFilter={selectedClasses} onZoom={zoomToElement} />
-          <OptimizerPanel mode={mode} fileSize={summary.fileSize} />
+      <div className="flex-1 min-h-0 flex">
+        <aside className="min-h-0 shrink-0 bg-panel flex flex-col overflow-y-auto overflow-x-hidden max-lg:hidden" style={{ width: sidebarWidth }}>
+          <div className="shrink-0 overflow-y-auto border-b border-line">
+            <UploadPanel onFile={handleFile} />
+            <MetricGrid summary={summary} />
+          </div>
+          <div className="shrink-0 min-h-[130px] overflow-hidden" style={{ height: classPanelHeight }}>
+            <ClassTree
+              classes={classes}
+              selected={selectedClasses}
+              onSelect={handleClassSelect}
+              onToggleVisibility={toggleClassVisibility}
+              onIsolate={isolateClass}
+            />
+          </div>
+          <ResizeHandle axis="y" onResize={(delta) => setClassPanelHeight((value) => clamp(value + delta, 130, 520))} />
+          <div className="shrink-0 min-h-[150px] overflow-hidden" style={{ height: elementPanelHeight }}>
+            <ElementBrowser elements={selectedElements} classFilter={selectedClasses} onZoom={zoomToElement} />
+          </div>
+          <ResizeHandle axis="y" onResize={(delta) => setElementPanelHeight((value) => clamp(value + delta, 150, 620))} />
+          <div className="shrink-0 max-h-52 overflow-y-auto">
+            <OptimizerPanel mode={mode} fileSize={summary.fileSize} />
+          </div>
         </aside>
-        <Viewer
-          classes={classes}
-          focusedElement={focused}
-          modelName={modelName}
-          isDemo={isDemo}
-          geometry={geometry}
-          geometryStatus={geometryStatus}
-          onRequestGeometry={loadGeometryPreview}
-        />
+        <ResizeHandle axis="x" onResize={(delta) => setSidebarWidth((value) => clamp(value + delta, 320, 720))} responsive />
+        <div className={viewerExpanded ? "fixed inset-0 z-50 bg-[#0d1117]" : "flex-1 min-w-0 min-h-0"}>
+          <Viewer
+            classes={classes}
+            focusedElement={focused}
+            modelName={modelName}
+            isDemo={isDemo}
+            geometry={geometry}
+            geometryStatus={geometryStatus}
+            onRequestGeometry={loadGeometryPreview}
+            onLoadFromBackend={loadBackendIfcGeometry}
+            expanded={viewerExpanded}
+            onToggleExpanded={toggleFullscreen}
+          />
+        </div>
       </div>
-      <BottomConsole logs={logs} progress={progress} />
+      <ResizeHandle axis="y-up" onResize={(delta) => setConsoleHeight((value) => clamp(value - delta, 90, 420))} />
+      <div className="shrink-0 min-h-[90px]" style={{ height: consoleHeight }}>
+        <BottomConsole logs={logs} progress={progress} />
+      </div>
     </div>
   );
 }
@@ -337,6 +418,51 @@ function now(): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.min(Math.max(value, minimum), maximum);
+}
+
+function ResizeHandle({
+  axis,
+  onResize,
+  responsive = false
+}: {
+  axis: "x" | "y" | "y-up";
+  onResize: (delta: number) => void;
+  responsive?: boolean;
+}) {
+  function start(event: React.PointerEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const initial = axis === "x" ? event.clientX : event.clientY;
+    let previous = initial;
+    const move = (moveEvent: PointerEvent) => {
+      const current = axis === "x" ? moveEvent.clientX : moveEvent.clientY;
+      onResize(current - previous);
+      previous = current;
+    };
+    const stop = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", stop);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.body.style.cursor = axis === "x" ? "col-resize" : "row-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", stop, { once: true });
+  }
+
+  return (
+    <div
+      className={`${axis === "x" ? "w-1 cursor-col-resize" : "h-1 cursor-row-resize"} ${
+        responsive ? "max-lg:hidden" : ""
+      } shrink-0 bg-line hover:bg-brand active:bg-brand`}
+      onPointerDown={start}
+      title="Drag to resize"
+    />
+  );
 }
 
 function buildElements(classes: IfcClassStat[]): IfcElement[] {

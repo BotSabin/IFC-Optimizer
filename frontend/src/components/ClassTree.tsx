@@ -13,7 +13,7 @@ type Props = {
 
 export function ClassTree({ classes, selected, onSelect, onToggleVisibility, onIsolate }: Props) {
   return (
-    <section className="min-h-0 overflow-hidden flex flex-col">
+    <section className="h-full min-h-0 overflow-hidden flex flex-col">
       <div className="h-9 shrink-0 px-3 border-b border-line flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wide text-slate-300">Class Tree</span>
         <span className="text-[11px] text-slate-500">{selected.length} selected</span>

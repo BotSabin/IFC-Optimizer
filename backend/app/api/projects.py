@@ -74,6 +74,16 @@ def get_geometry(project_id: str, limit: int = 80, classes: str | None = None, d
     )
 
 
+@router.get("/{project_id}/source")
+def download_project_source(project_id: str, db: Session = Depends(get_db)) -> FileResponse:
+    project = _require_project(db, project_id)
+    path = storage.path_for_key(project.storage_key).resolve()
+    uploads_dir = storage.settings.uploads_dir.resolve()
+    if path.parent != uploads_dir or not path.is_file():
+        raise HTTPException(status_code=404, detail="IFC source file not found")
+    return FileResponse(path, filename=project.filename, media_type="application/x-step")
+
+
 @router.post("/{project_id}/optimize", response_model=TaskRead)
 def optimize(project_id: str, payload: OptimizeRequest, db: Session = Depends(get_db)) -> BackgroundTask:
     _require_project(db, project_id)
