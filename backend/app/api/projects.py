@@ -1,6 +1,9 @@
 from uuid import uuid4
 
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.models.database import get_db
@@ -117,6 +120,19 @@ def get_task(project_id: str, task_id: str, db: Session = Depends(get_db)) -> Ba
     if not task or task.project_id != project_id:
         raise HTTPException(status_code=404, detail="Task not found")
     return task
+
+
+@router.get("/{project_id}/tasks/{task_id}/download")
+def download_task_output(project_id: str, task_id: str, db: Session = Depends(get_db)) -> FileResponse:
+    task = get_task(project_id, task_id, db)
+    output = (task.result or {}).get("output")
+    if task.status != "complete" or not output:
+        raise HTTPException(status_code=409, detail="Task output is not ready")
+    path = Path(output).resolve()
+    exports_dir = storage.settings.exports_dir.resolve()
+    if path.parent != exports_dir or not path.is_file():
+        raise HTTPException(status_code=404, detail="Export file not found")
+    return FileResponse(path, filename=path.name, media_type="application/x-step")
 
 
 def _require_project(db: Session, project_id: str) -> Project:

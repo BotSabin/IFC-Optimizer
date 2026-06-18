@@ -10,6 +10,7 @@ import { UploadPanel } from "./components/UploadPanel";
 import { Viewer } from "./components/Viewer";
 import { classColors, initialClasses, logs as seedLogs, summary as demoSummary } from "./data/demoModel";
 import { apiUrl } from "./lib/api";
+import { bytes } from "./lib/format";
 import { extractLocalIfcGeometry } from "./lib/webIfcGeometry";
 import { AnalysisSummary, GeometryMesh, GeometryStatus, IfcClassStat, IfcElement, OptimizationMode, TaskLog } from "./types/bim";
 
@@ -45,6 +46,7 @@ export default function App() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [geometry, setGeometry] = useState<GeometryMesh[]>([]);
   const [geometryStatus, setGeometryStatus] = useState<GeometryStatus>("demo");
+  const [exportBusy, setExportBusy] = useState(false);
 
   const selectedElements = useMemo(() => {
     const generated = buildElements(classes);
@@ -175,6 +177,70 @@ export default function App() {
     setSelectedClasses([name]);
   }
 
+  function hideSelectedClasses() {
+    if (!selectedClasses.length) return;
+    setClasses((current) => current.map((item) => (selectedClasses.includes(item.name) ? { ...item, visible: false } : item)));
+    setLogs((current) => [...current, { time: now(), message: `Hidden ${selectedClasses.length} selected classes; export visible to remove them from the IFC` }]);
+  }
+
+  async function deleteSelectedClasses() {
+    if (!projectId || !selectedClasses.length || exportBusy) return;
+    const confirmed = window.confirm(
+      `Delete ${selectedClasses.length} selected IFC classes from a new exported file? The uploaded original remains unchanged.`
+    );
+    if (!confirmed) return;
+    await runIfcExport("delete-classes", { classes: selectedClasses }, "Deleted classes");
+  }
+
+  async function exportVisibleClasses() {
+    if (!projectId || exportBusy) return;
+    const visibleClasses = classes.filter((item) => item.visible).map((item) => item.name);
+    if (!visibleClasses.length) {
+      setLogs((current) => [...current, { time: now(), message: "Nothing to export: all classes are hidden" }]);
+      return;
+    }
+    await runIfcExport("export-ifc", { classes: visibleClasses }, "Visible classes export");
+  }
+
+  async function runIfcExport(action: "delete-classes" | "export-ifc", payload: object, label: string) {
+    if (!projectId) return;
+    setExportBusy(true);
+    setProgress(8);
+    setLogs((current) => [...current, { time: now(), message: `${label} started; large IFC files can take several minutes` }]);
+    try {
+      const response = await fetch(apiUrl(`/api/v1/projects/${projectId}/${action}`), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!response.ok) throw new Error(await response.text());
+      let task = await response.json();
+      while (task.status === "queued" || task.status === "running") {
+        setProgress(Math.max(8, task.progress ?? 8));
+        await delay(1200);
+        const taskResponse = await fetch(apiUrl(`/api/v1/projects/${projectId}/tasks/${task.id}`), { cache: "no-store" });
+        if (!taskResponse.ok) throw new Error(await taskResponse.text());
+        task = await taskResponse.json();
+      }
+      if (task.status !== "complete") throw new Error(task.logs?.at(-1) ?? "IFC export failed");
+      const result = task.result ?? {};
+      setProgress(100);
+      setLogs((current) => [
+        ...current,
+        {
+          time: now(),
+          message: `${label} complete: ${bytes(result.original_size ?? 0)} -> ${bytes(result.output_size ?? 0)} (${result.reduction_percent ?? 0}% smaller)`
+        }
+      ]);
+      window.location.assign(apiUrl(`/api/v1/projects/${projectId}/tasks/${task.id}/download`));
+    } catch (error) {
+      setProgress(100);
+      setLogs((current) => [...current, { time: now(), message: error instanceof Error ? error.message : "IFC export failed" }]);
+    } finally {
+      setExportBusy(false);
+    }
+  }
+
   async function handleFile(file: File) {
     setProgress(0);
     setLogs([{ time: now(), message: `Uploading ${file.name}` }]);
@@ -217,7 +283,15 @@ export default function App() {
 
   return (
     <div className="h-screen w-screen overflow-hidden bg-shell text-slate-100 flex flex-col">
-      <Toolbar mode={mode} onModeChange={setMode} onUploadClick={() => document.getElementById("ifc-upload-proxy")?.click()} />
+      <Toolbar
+        mode={mode}
+        onModeChange={setMode}
+        onUploadClick={() => document.getElementById("ifc-upload-proxy")?.click()}
+        onHideSelected={hideSelectedClasses}
+        onDeleteSelected={deleteSelectedClasses}
+        onExportVisible={exportVisibleClasses}
+        busy={exportBusy}
+      />
       <div className="hidden">
         <input id="ifc-upload-proxy" type="file" accept=".ifc,.ifczip" onChange={(event) => event.target.files?.[0] && handleFile(event.target.files[0])} />
       </div>
@@ -252,6 +326,10 @@ export default function App() {
 
 function now(): string {
   return new Date().toLocaleTimeString("en-US", { hour12: false });
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function buildElements(classes: IfcClassStat[]): IfcElement[] {

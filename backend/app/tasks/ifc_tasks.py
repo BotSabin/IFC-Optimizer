@@ -85,9 +85,7 @@ def _optimize(project: Project, mode: str) -> dict:
 def _delete_classes(project: Project, classes: list[str]) -> dict:
     source = storage.path_for_key(project.storage_key)
     target = storage.export_path(f"{project.id}_classes_deleted.ifc")
-    result = ifc_service.export_subset(source, target, None, None)
-    result["deleted_classes"] = classes
-    return result
+    return ifc_service.delete_classes(source, target, classes)
 
 
 def _export_ifc(project: Project, classes: list[str], element_ids: list[int]) -> dict:
@@ -105,4 +103,3 @@ def _export_glb(project: Project) -> dict:
 
 def _log(task: BackgroundTask, message: str) -> None:
     task.logs = [*(task.logs or []), message]
-

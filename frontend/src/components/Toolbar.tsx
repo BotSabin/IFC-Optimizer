@@ -20,12 +20,16 @@ type Props = {
   mode: OptimizationMode;
   onModeChange: (mode: OptimizationMode) => void;
   onUploadClick: () => void;
+  onHideSelected: () => void;
+  onDeleteSelected: () => void;
+  onExportVisible: () => void;
+  busy: boolean;
 };
 
 const iconButton =
   "h-9 w-9 inline-flex items-center justify-center border border-line bg-panel2 text-slate-200 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-brand";
 
-export function Toolbar({ mode, onModeChange, onUploadClick }: Props) {
+export function Toolbar({ mode, onModeChange, onUploadClick, onHideSelected, onDeleteSelected, onExportVisible, busy }: Props) {
   return (
     <header className="h-14 border-b border-line bg-shell px-3 flex items-center justify-between gap-3">
       <div className="flex items-center gap-3 min-w-0">
@@ -52,10 +56,10 @@ export function Toolbar({ mode, onModeChange, onUploadClick }: Props) {
           <button className={iconButton} title="Reset camera">
             <RotateCcw size={17} />
           </button>
-          <button className={iconButton} title="Hide selected">
+          <button className={iconButton} title="Hide selected classes" onClick={onHideSelected} disabled={busy}>
             <EyeOff size={17} />
           </button>
-          <button className={iconButton} title="Delete selected">
+          <button className={iconButton} title="Delete selected classes and download IFC" onClick={onDeleteSelected} disabled={busy}>
             <Scissors size={17} />
           </button>
           <button className={iconButton} title="Override color by class">
@@ -77,7 +81,7 @@ export function Toolbar({ mode, onModeChange, onUploadClick }: Props) {
             </button>
           ))}
         </div>
-        <button className={iconButton} title="Export visible classes">
+        <button className={iconButton} title="Export visible classes as a smaller IFC" onClick={onExportVisible} disabled={busy}>
           <FileDown size={17} />
         </button>
         <button className={iconButton} title="Export GLB">
@@ -90,4 +94,3 @@ export function Toolbar({ mode, onModeChange, onUploadClick }: Props) {
     </header>
   );
 }
-

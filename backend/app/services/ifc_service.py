@@ -72,19 +72,75 @@ class IfcService:
         }
 
     def optimize(self, source: Path, target: Path, mode: str) -> dict:
-        target.write_bytes(source.read_bytes())
+        import ifcopenshell  # type: ignore
+
+        model = ifcopenshell.open(str(source))
+        removed = 0
+        if mode in {"medium", "aggressive"}:
+            removed += self._remove_unreferenced(model, "IfcOwnerHistory")
+        if mode == "aggressive":
+            removed += self._remove_unreferenced(model, "IfcPresentationLayerAssignment")
+        model.write(str(target))
         return {
             "mode": mode,
             "output": str(target),
+            "removed_entities": removed,
+            **self._size_result(source, target),
             "completed_at": datetime.utcnow().isoformat(),
         }
 
     def export_subset(self, source: Path, target: Path, classes: Iterable[str] | None, element_ids: Iterable[int] | None) -> dict:
-        target.write_bytes(source.read_bytes())
+        import ifcopenshell  # type: ignore
+
+        model = ifcopenshell.open(str(source))
+        keep_classes = {item for item in (classes or []) if item}
+        keep_ids = {int(item) for item in (element_ids or [])}
+        products = list(model.by_type("IfcProduct"))
+        to_remove = [
+            product
+            for product in products
+            if (keep_classes and product.is_a() not in keep_classes) or (keep_ids and product.id() not in keep_ids)
+        ]
+        removed = self._remove_products(model, to_remove)
+        model.write(str(target))
         return {
             "output": str(target),
-            "classes": list(classes or []),
-            "element_ids": list(element_ids or []),
+            "classes": sorted(keep_classes),
+            "element_ids": sorted(keep_ids),
+            "removed_products": removed,
+            **self._size_result(source, target),
+        }
+
+    def delete_classes(self, source: Path, target: Path, classes: Iterable[str]) -> dict:
+        import ifcopenshell  # type: ignore
+
+        model = ifcopenshell.open(str(source))
+        requested = sorted({item for item in classes if item})
+        products = []
+        seen: set[int] = set()
+        skipped_non_products = 0
+        for class_name in requested:
+            try:
+                entities = model.by_type(class_name)
+            except RuntimeError:
+                continue
+            for entity in entities:
+                if entity.id() in seen:
+                    continue
+                seen.add(entity.id())
+                if entity.is_a("IfcProduct") or entity.is_a("IfcTypeProduct"):
+                    products.append(entity)
+                else:
+                    skipped_non_products += 1
+
+        removed = self._remove_products(model, products)
+        model.write(str(target))
+        return {
+            "output": str(target),
+            "deleted_classes": requested,
+            "removed_products": removed,
+            "skipped_non_products": skipped_non_products,
+            **self._size_result(source, target),
         }
 
     def export_glb(self, source: Path, target: Path) -> dict:
@@ -245,6 +301,37 @@ class IfcService:
             "IfcWindow": "#67e8f9",
         }
         return colors.get(class_name, "#94a3b8")
+
+    def _remove_products(self, model, products: Iterable) -> int:
+        from ifcopenshell.api.root import remove_product  # type: ignore
+
+        removed = 0
+        for product in products:
+            try:
+                remove_product(model, product=product)
+                removed += 1
+            except Exception:
+                continue
+        return removed
+
+    def _remove_unreferenced(self, model, class_name: str) -> int:
+        removed = 0
+        for entity in list(model.by_type(class_name)):
+            if model.get_total_inverses(entity) == 0:
+                model.remove(entity)
+                removed += 1
+        return removed
+
+    def _size_result(self, source: Path, target: Path) -> dict:
+        original_size = source.stat().st_size
+        output_size = target.stat().st_size
+        reduction = max(original_size - output_size, 0)
+        return {
+            "original_size": original_size,
+            "output_size": output_size,
+            "saved_bytes": reduction,
+            "reduction_percent": round((reduction / original_size) * 100, 2) if original_size else 0,
+        }
 
     def _streaming_step_analysis(self, path: Path) -> AnalysisResult:
         size = max(path.stat().st_size, 1)

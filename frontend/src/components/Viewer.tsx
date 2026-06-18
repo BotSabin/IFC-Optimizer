@@ -37,9 +37,10 @@ export function Viewer({ classes, focusedElement, modelName, isDemo, geometry, g
     scene.add(grid);
 
     const group = new THREE.Group();
+    const visibleClassNames = new Set(classes.filter((item) => item.visible).map((item) => item.name));
     if (geometry.length > 0) {
       const bounds = new THREE.Box3();
-      geometry.forEach((item) => {
+      geometry.filter((item) => visibleClassNames.has(item.class_name)).forEach((item) => {
         const meshGeometry = new THREE.BufferGeometry();
         meshGeometry.setAttribute("position", new THREE.Float32BufferAttribute(item.positions, 3));
         meshGeometry.setIndex(item.indices);
@@ -49,11 +50,13 @@ export function Viewer({ classes, focusedElement, modelName, isDemo, geometry, g
         const material = new THREE.MeshStandardMaterial({ color: item.color, roughness: 0.7, metalness: 0.02 });
         group.add(new THREE.Mesh(meshGeometry, material));
       });
-      const size = bounds.getSize(new THREE.Vector3());
-      const center = bounds.getCenter(new THREE.Vector3());
-      const maxAxis = Math.max(size.x, size.y, size.z, 1);
-      group.position.sub(center);
-      group.scale.setScalar(34 / maxAxis);
+      if (group.children.length > 0) {
+        const size = bounds.getSize(new THREE.Vector3());
+        const center = bounds.getCenter(new THREE.Vector3());
+        const maxAxis = Math.max(size.x, size.y, size.z, 1);
+        group.position.sub(center);
+        group.scale.setScalar(34 / maxAxis);
+      }
     } else if (isDemo) {
       const visible = classes.filter((item) => item.visible && item.geometry > 0);
       visible.slice(0, 7).forEach((item, index) => {
