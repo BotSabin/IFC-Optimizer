@@ -121,8 +121,30 @@ export default function App() {
   useEffect(() => {
     if (!projectId || isDemo || geometry.length || backendLoadStarted.current === projectId) return;
     backendLoadStarted.current = projectId;
-    window.setTimeout(() => loadBackendIfcGeometry(), 350);
+    window.setTimeout(() => loadCachedOrBackendGeometry(), 350);
   }, [projectId, isDemo]);
+
+  async function loadCachedOrBackendGeometry() {
+    if (!projectId) return;
+    try {
+      setGeometryStatus("loading");
+      setLogs((current) => [...current, { time: now(), message: "Checking server geometry cache" }]);
+      const response = await apiFetch(`/api/v1/projects/${projectId}/geometry?limit=160`, { cache: "no-store" });
+      if (response.ok) {
+        const payload = await response.json();
+        if (payload.meshes?.length) {
+          setGeometry(payload.meshes);
+          setGeometryStatus("ready");
+          setProgress(100);
+          setLogs((current) => [...current, { time: now(), message: `Loaded ${payload.mesh_count} real IFC meshes from server cache` }]);
+          return;
+        }
+      }
+    } catch {
+      // Fall back to the original IFC download.
+    }
+    await loadBackendIfcGeometry();
+  }
 
   async function loadGeometryPreview() {
     if (!projectId) return;
