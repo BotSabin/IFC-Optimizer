@@ -9,7 +9,7 @@ import { Toolbar } from "./components/Toolbar";
 import { UploadPanel } from "./components/UploadPanel";
 import { Viewer } from "./components/Viewer";
 import { classColors, initialClasses, logs as seedLogs, summary as demoSummary } from "./data/demoModel";
-import { apiUrl } from "./lib/api";
+import { apiFetch } from "./lib/api";
 import { bytes } from "./lib/format";
 import { extractLocalIfcGeometry } from "./lib/webIfcGeometry";
 import { AnalysisSummary, GeometryMesh, GeometryStatus, IfcClassStat, IfcElement, OptimizationMode, TaskLog } from "./types/bim";
@@ -56,7 +56,7 @@ export default function App() {
   useEffect(() => {
     async function loadLatestProject() {
       try {
-        const response = await fetch(apiUrl("/api/v1/projects"), { cache: "no-store" });
+        const response = await apiFetch("/api/v1/projects", { cache: "no-store" });
         if (!response.ok) return;
         const projects = (await response.json()) as BackendProject[];
         const latest = projects.find((project) => project.analysis);
@@ -105,7 +105,7 @@ export default function App() {
       setLogs((current) => [...current, { time: now(), message: "Generating real IFC geometry preview" }]);
       const selected = classes.filter((item) => item.geometry > 0).slice(0, 4).map((item) => item.name).join(",");
       const timeout = window.setTimeout(() => controller.abort(), 90000);
-      const response = await fetch(apiUrl(`/api/v1/projects/${projectId}/geometry?limit=40&classes=${encodeURIComponent(selected)}`), {
+      const response = await apiFetch(`/api/v1/projects/${projectId}/geometry?limit=40&classes=${encodeURIComponent(selected)}`, {
         cache: "no-store",
         signal: controller.signal
       });
@@ -208,7 +208,7 @@ export default function App() {
     setProgress(8);
     setLogs((current) => [...current, { time: now(), message: `${label} started; large IFC files can take several minutes` }]);
     try {
-      const response = await fetch(apiUrl(`/api/v1/projects/${projectId}/${action}`), {
+      const response = await apiFetch(`/api/v1/projects/${projectId}/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -218,7 +218,7 @@ export default function App() {
       while (task.status === "queued" || task.status === "running") {
         setProgress(Math.max(8, task.progress ?? 8));
         await delay(1200);
-        const taskResponse = await fetch(apiUrl(`/api/v1/projects/${projectId}/tasks/${task.id}`), { cache: "no-store" });
+        const taskResponse = await apiFetch(`/api/v1/projects/${projectId}/tasks/${task.id}`, { cache: "no-store" });
         if (!taskResponse.ok) throw new Error(await taskResponse.text());
         task = await taskResponse.json();
       }
@@ -232,7 +232,14 @@ export default function App() {
           message: `${label} complete: ${bytes(result.original_size ?? 0)} -> ${bytes(result.output_size ?? 0)} (${result.reduction_percent ?? 0}% smaller)`
         }
       ]);
-      window.location.assign(apiUrl(`/api/v1/projects/${projectId}/tasks/${task.id}/download`));
+      const downloadResponse = await apiFetch(`/api/v1/projects/${projectId}/tasks/${task.id}/download`);
+      if (!downloadResponse.ok) throw new Error(await downloadResponse.text());
+      const downloadUrl = URL.createObjectURL(await downloadResponse.blob());
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = task.result?.output?.split("/").at(-1) ?? "optimized.ifc";
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 30000);
     } catch (error) {
       setProgress(100);
       setLogs((current) => [...current, { time: now(), message: error instanceof Error ? error.message : "IFC export failed" }]);
@@ -249,7 +256,7 @@ export default function App() {
       body.append("file", file);
       setProgress(18);
       setLogs((current) => [...current, { time: now(), message: "Sending file to FastAPI backend" }]);
-      const response = await fetch(apiUrl("/api/v1/projects/upload"), { method: "POST", body });
+      const response = await apiFetch("/api/v1/projects/upload", { method: "POST", body });
       if (!response.ok) throw new Error(await response.text());
       const payload = await response.json();
       const analysis = payload.project.analysis as BackendAnalysis | null;
