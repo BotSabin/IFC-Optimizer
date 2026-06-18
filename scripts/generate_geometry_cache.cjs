@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const { IfcAPI } = require("../frontend/node_modules/web-ifc");
 
-const [sourceArg, outputArg, projectId, limitArg = "160"] = process.argv.slice(2);
+const [sourceArg, outputArg, projectId, limitArg = "160", classesArg = ""] = process.argv.slice(2);
 if (!sourceArg || !outputArg || !projectId) {
   throw new Error("Usage: node generate_geometry_cache.cjs SOURCE OUTPUT PROJECT_ID [LIMIT]");
 }
@@ -10,7 +10,7 @@ if (!sourceArg || !outputArg || !projectId) {
 const source = path.resolve(sourceArg);
 const output = path.resolve(outputArg);
 const limit = Math.max(1, Math.min(Number(limitArg), 400));
-const priorities = [
+const defaultPriorities = [
   "IfcWall",
   "IfcWallStandardCase",
   "IfcSlab",
@@ -24,6 +24,8 @@ const priorities = [
   "IfcElementAssembly",
   "IfcBuildingElementProxy"
 ];
+const requestedClasses = classesArg.split(",").map((item) => item.trim()).filter(Boolean);
+const priorities = requestedClasses.length ? requestedClasses : defaultPriorities;
 
 function transformVertexData(vertices, matrix) {
   const result = [];

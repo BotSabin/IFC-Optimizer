@@ -4,6 +4,8 @@ import hashlib
 import json
 import re
 import random
+import shutil
+import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
@@ -89,24 +91,65 @@ class IfcService:
             "completed_at": datetime.utcnow().isoformat(),
         }
 
-    def export_subset(self, source: Path, target: Path, classes: Iterable[str] | None, element_ids: Iterable[int] | None) -> dict:
+    def export_subset(
+        self,
+        source: Path,
+        target: Path,
+        classes: Iterable[str] | None,
+        element_ids: Iterable[int] | None,
+        target_schema: str | None = None,
+    ) -> dict:
         import ifcopenshell  # type: ignore
+        from ifcopenshell.util.schema import Migrator  # type: ignore
 
         model = ifcopenshell.open(str(source))
         keep_classes = {item for item in (classes or []) if item}
         keep_ids = {int(item) for item in (element_ids or [])}
-        products = list(model.by_type("IfcProduct"))
-        to_remove = [
-            product
-            for product in products
-            if (keep_classes and product.is_a() not in keep_classes) or (keep_ids and product.id() not in keep_ids)
-        ]
-        removed = self._remove_products(model, to_remove)
-        model.write(str(target))
+        destination_schema = target_schema or model.schema
+
+        if keep_ids:
+            output_model = ifcopenshell.file(schema=destination_schema)
+            migrator = Migrator()
+            seeds = []
+            for class_name in ("IfcProject", "IfcSite", "IfcBuilding", "IfcBuildingStorey"):
+                try:
+                    seeds.extend(model.by_type(class_name))
+                except RuntimeError:
+                    continue
+            for step_id in sorted(keep_ids):
+                try:
+                    entity = model.by_id(step_id)
+                except RuntimeError:
+                    continue
+                if entity:
+                    seeds.append(entity)
+            for entity in seeds:
+                try:
+                    migrator.migrate(entity, output_model)
+                except Exception:
+                    continue
+            output_model.write(str(target))
+            removed = max(len(model.by_type("IfcProduct")) - len(keep_ids), 0)
+        else:
+            products = list(model.by_type("IfcProduct"))
+            to_remove = [product for product in products if keep_classes and product.is_a() not in keep_classes]
+            removed = self._remove_products(model, to_remove)
+            if destination_schema == model.schema:
+                model.write(str(target))
+            else:
+                output_model = ifcopenshell.file(schema=destination_schema)
+                migrator = Migrator()
+                for entity in model:
+                    try:
+                        migrator.migrate(entity, output_model)
+                    except Exception:
+                        continue
+                output_model.write(str(target))
         return {
             "output": str(target),
             "classes": sorted(keep_classes),
             "element_ids": sorted(keep_ids),
+            "target_schema": destination_schema,
             "removed_products": removed,
             **self._size_result(source, target),
         }
@@ -155,6 +198,8 @@ class IfcService:
             return GeometryResponse(**payload)
 
         if source.stat().st_size > 80 * 1024 * 1024:
+            if class_names and self._generate_web_ifc_cache(project_id, source, cache_path, limit, class_names):
+                return GeometryResponse(**json.loads(cache_path.read_text()))
             return GeometryResponse(
                 project_id=project_id,
                 source="pending-cache",
@@ -175,6 +220,44 @@ class IfcService:
         )
         cache_path.write_text(response.model_dump_json())
         return response
+
+    def _generate_web_ifc_cache(
+        self,
+        project_id: str,
+        source: Path,
+        cache_path: Path,
+        limit: int,
+        class_names: list[str],
+    ) -> bool:
+        repo_root = Path(__file__).resolve().parents[3]
+        script = repo_root / "scripts" / "generate_geometry_cache.cjs"
+        node = shutil.which("node")
+        if not node:
+            runtime_root = repo_root.parent.parent / "work" / "runtime"
+            candidates = sorted(runtime_root.glob("node-*/bin/node"), reverse=True)
+            node = str(candidates[0]) if candidates else None
+        if not node or not script.exists():
+            return False
+        try:
+            subprocess.run(
+                [
+                    node,
+                    "--max-old-space-size=4096",
+                    str(script),
+                    str(source),
+                    str(cache_path),
+                    project_id,
+                    str(limit),
+                    ",".join(class_names),
+                ],
+                check=True,
+                timeout=120,
+                capture_output=True,
+                text=True,
+            )
+            return cache_path.exists()
+        except (OSError, subprocess.SubprocessError):
+            return False
 
     def _analyze_with_ifcopenshell(self, path: Path, ifcopenshell_module) -> AnalysisResult:
         model = ifcopenshell_module.open(str(path))

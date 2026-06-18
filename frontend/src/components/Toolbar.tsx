@@ -13,7 +13,7 @@ import {
   Scissors,
   Upload
 } from "lucide-react";
-import { OptimizationMode } from "../types/bim";
+import { IfcSchema, OptimizationMode, ViewerTool } from "../types/bim";
 
 type Props = {
   mode: OptimizationMode;
@@ -23,13 +23,35 @@ type Props = {
   onDeleteSelected: () => void;
   onExportVisible: () => void;
   onFullscreen: () => void;
+  tool: ViewerTool;
+  onToolChange: (tool: ViewerTool) => void;
+  onFitSelection: () => void;
+  onResetCamera: () => void;
+  exportSchema: IfcSchema;
+  onExportSchemaChange: (schema: IfcSchema) => void;
   busy: boolean;
 };
 
 const iconButton =
   "h-9 w-9 inline-flex items-center justify-center border border-line bg-panel2 text-slate-200 hover:bg-slate-700 focus:outline-none focus:ring-2 focus:ring-brand";
 
-export function Toolbar({ mode, onModeChange, onUploadClick, onHideSelected, onDeleteSelected, onExportVisible, onFullscreen, busy }: Props) {
+export function Toolbar({
+  mode,
+  onModeChange,
+  onUploadClick,
+  onHideSelected,
+  onDeleteSelected,
+  onExportVisible,
+  onFullscreen,
+  tool,
+  onToolChange,
+  onFitSelection,
+  onResetCamera,
+  exportSchema,
+  onExportSchemaChange,
+  busy
+}: Props) {
+  const toolButton = (value: ViewerTool) => `${iconButton} ${tool === value ? "border-brand bg-sky-500/20 text-brand" : ""}`;
   return (
     <header className="h-14 border-b border-line bg-shell px-3 flex items-center justify-between gap-3">
       <div className="flex items-center gap-3 min-w-0">
@@ -38,25 +60,25 @@ export function Toolbar({ mode, onModeChange, onUploadClick, onHideSelected, onD
           <button className={iconButton} onClick={onUploadClick} title="Upload IFC">
             <Upload size={17} />
           </button>
-          <button className={iconButton} title="Orbit">
+          <button className={toolButton("orbit")} title="Orbit" onClick={() => onToolChange("orbit")}>
             <Move3D size={17} />
           </button>
-          <button className={iconButton} title="First person navigation">
+          <button className={toolButton("select")} title="Select elements" onClick={() => onToolChange("select")}>
             <Navigation size={17} />
           </button>
-          <button className={iconButton} title="Section box">
+          <button className={toolButton("box")} title="Box selection" onClick={() => onToolChange("box")}>
             <BoxSelect size={17} />
           </button>
-          <button className={iconButton} title="Measure">
+          <button className={toolButton("measure")} title="Measure distance" onClick={() => onToolChange("measure")}>
             <Ruler size={17} />
           </button>
-          <button className={iconButton} title="Fit selection">
+          <button className={iconButton} title="Fit selection" onClick={onFitSelection}>
             <Focus size={17} />
           </button>
-          <button className={iconButton} title="Reset camera">
+          <button className={iconButton} title="Reset camera" onClick={onResetCamera}>
             <RotateCcw size={17} />
           </button>
-          <button className={iconButton} title="Hide selected classes" onClick={onHideSelected} disabled={busy}>
+          <button className={iconButton} title="Hide selected elements or classes" onClick={onHideSelected} disabled={busy}>
             <EyeOff size={17} />
           </button>
           <button className={iconButton} title="Delete selected classes and download IFC" onClick={onDeleteSelected} disabled={busy}>
@@ -68,6 +90,16 @@ export function Toolbar({ mode, onModeChange, onUploadClick, onHideSelected, onD
         </div>
       </div>
       <div className="flex items-center gap-2">
+        <select
+          className="h-9 border border-line bg-panel2 px-2 text-xs text-slate-200 outline-none focus:border-brand"
+          value={exportSchema}
+          onChange={(event) => onExportSchemaChange(event.target.value as IfcSchema)}
+          title="IFC export schema"
+        >
+          <option value="IFC2X3">IFC2X3</option>
+          <option value="IFC4">IFC4</option>
+          <option value="IFC4X3">IFC4X3</option>
+        </select>
         <div className="hidden sm:flex border border-line overflow-hidden">
           {(["safe", "medium", "aggressive"] as OptimizationMode[]).map((item) => (
             <button

@@ -12,9 +12,21 @@ import { classColors, initialClasses, logs as seedLogs, summary as demoSummary }
 import { apiFetch } from "./lib/api";
 import { bytes } from "./lib/format";
 import { extractLocalIfcGeometry } from "./lib/webIfcGeometry";
-import { AnalysisSummary, GeometryMesh, GeometryStatus, IfcClassStat, IfcElement, OptimizationMode, TaskLog } from "./types/bim";
+import {
+  AnalysisSummary,
+  GeometryMesh,
+  GeometryStatus,
+  IfcClassStat,
+  IfcElement,
+  IfcSchema,
+  OptimizationMode,
+  TaskLog,
+  ViewerAction,
+  ViewerTool
+} from "./types/bim";
 
 type BackendAnalysis = {
+  schema: string;
   total_entities: number;
   total_products: number;
   total_ifc_classes: number;
@@ -52,6 +64,13 @@ export default function App() {
   const [elementPanelHeight, setElementPanelHeight] = useState(260);
   const [consoleHeight, setConsoleHeight] = useState(150);
   const [viewerExpanded, setViewerExpanded] = useState(false);
+  const [viewerTool, setViewerTool] = useState<ViewerTool>("orbit");
+  const [viewerAction, setViewerAction] = useState<{ type: ViewerAction; token: number }>({ type: null, token: 0 });
+  const [selectedElementIds, setSelectedElementIds] = useState<Set<number>>(new Set());
+  const [hiddenElementIds, setHiddenElementIds] = useState<Set<number>>(new Set());
+  const [loadedClasses, setLoadedClasses] = useState<Set<string>>(new Set());
+  const [loadingClass, setLoadingClass] = useState<string | null>(null);
+  const [exportSchema, setExportSchema] = useState<IfcSchema>("IFC2X3");
   const backendLoadStarted = useRef<string | null>(null);
 
   const selectedElements = useMemo(() => {
@@ -98,7 +117,11 @@ export default function App() {
     setModelName(filename);
     setIsDemo(false);
     setGeometry([]);
+    setSelectedElementIds(new Set());
+    setHiddenElementIds(new Set());
+    setLoadedClasses(new Set());
     setGeometryStatus("idle");
+    setExportSchema(normalizeSchema(analysis.schema));
     setSummary({
       totalEntities: analysis.total_entities,
       totalProducts: analysis.total_products,
@@ -134,6 +157,7 @@ export default function App() {
         const payload = await response.json();
         if (payload.meshes?.length) {
           setGeometry(payload.meshes);
+          setLoadedClasses(new Set(payload.meshes.map((item: GeometryMesh) => item.class_name.toLowerCase())));
           setGeometryStatus("ready");
           setProgress(100);
           setLogs((current) => [...current, { time: now(), message: `Loaded ${payload.mesh_count} real IFC meshes from server cache` }]);
@@ -162,6 +186,7 @@ export default function App() {
       if (!response.ok) throw new Error(await response.text());
       const payload = await response.json();
       setGeometry(payload.meshes ?? []);
+      setLoadedClasses(new Set((payload.meshes ?? []).map((item: GeometryMesh) => item.class_name.toLowerCase())));
       setGeometryStatus(payload.meshes?.length ? "ready" : "empty");
       setLogs((current) => [...current, { time: now(), message: `Loaded ${payload.mesh_count} real IFC geometry meshes` }]);
     } catch (error) {
@@ -187,6 +212,7 @@ export default function App() {
         setLogs((current) => [...current.slice(-80), { time: now(), message }]);
       }, preferredClasses);
       setGeometry(meshes);
+      setLoadedClasses(new Set(meshes.map((item) => item.class_name.toLowerCase())));
       setGeometryStatus(meshes.length ? "ready" : "empty");
       setLogs((current) => [...current, { time: now(), message: `Rendered ${meshes.length} local IFC geometry meshes` }]);
     } catch (error) {
@@ -257,6 +283,12 @@ export default function App() {
   }
 
   function hideSelectedClasses() {
+    if (selectedElementIds.size) {
+      setHiddenElementIds((current) => new Set([...current, ...selectedElementIds]));
+      setSelectedElementIds(new Set());
+      setLogs((current) => [...current, { time: now(), message: `Hidden ${selectedElementIds.size} selected elements without changing the camera` }]);
+      return;
+    }
     if (!selectedClasses.length) return;
     setClasses((current) => current.map((item) => (selectedClasses.includes(item.name) ? { ...item, visible: false } : item)));
     setLogs((current) => [...current, { time: now(), message: `Hidden ${selectedClasses.length} selected classes; export visible to remove them from the IFC` }]);
@@ -273,12 +305,41 @@ export default function App() {
 
   async function exportVisibleClasses() {
     if (!projectId || exportBusy) return;
-    const visibleClasses = classes.filter((item) => item.visible).map((item) => item.name);
-    if (!visibleClasses.length) {
+    const visibleClassNames = new Set(classes.filter((item) => item.visible).map((item) => item.name.toLowerCase()));
+    const visibleIds = [...new Set(
+      geometry
+        .filter((item) => visibleClassNames.has(item.class_name.toLowerCase()) && !hiddenElementIds.has(item.step_id))
+        .map((item) => item.step_id)
+    )];
+    if (!visibleIds.length) {
       setLogs((current) => [...current, { time: now(), message: "Nothing to export: all classes are hidden" }]);
       return;
     }
-    await runIfcExport("export-ifc", { classes: visibleClasses }, "Visible classes export");
+    await runIfcExport("export-ifc", { element_ids: visibleIds, target_schema: exportSchema }, `Visible viewer export (${exportSchema})`);
+  }
+
+  async function loadClassGeometry(name: string) {
+    if (!projectId || loadingClass) return;
+    setLoadingClass(name);
+    setLogs((current) => [...current, { time: now(), message: `Loading ${name} geometry into viewer` }]);
+    try {
+      const response = await apiFetch(`/api/v1/projects/${projectId}/geometry?limit=240&classes=${encodeURIComponent(name)}`, { cache: "no-store" });
+      if (!response.ok) throw new Error(await response.text());
+      const payload = await response.json();
+      const incoming = (payload.meshes ?? []) as GeometryMesh[];
+      setGeometry((current) => {
+        const merged = new Map(current.map((item) => [item.step_id, item]));
+        incoming.forEach((item) => merged.set(item.step_id, item));
+        return [...merged.values()];
+      });
+      setClasses((current) => current.map((item) => (item.name === name ? { ...item, visible: true } : item)));
+      setLoadedClasses((current) => new Set([...current, name.toLowerCase()]));
+      setLogs((current) => [...current, { time: now(), message: `Loaded ${incoming.length} ${name} meshes; current camera preserved` }]);
+    } catch (error) {
+      setLogs((current) => [...current, { time: now(), message: error instanceof Error ? error.message : `Could not load ${name}` }]);
+    } finally {
+      setLoadingClass(null);
+    }
   }
 
   async function runIfcExport(action: "delete-classes" | "export-ifc", payload: object, label: string) {
@@ -363,6 +424,8 @@ export default function App() {
 
   function zoomToElement(element: IfcElement) {
     setFocused(element);
+    setSelectedElementIds(new Set([element.stepId]));
+    setViewerAction((current) => ({ type: "fit", token: current.token + 1 }));
     setLogs((current) => [...current, { time: now(), message: `Zoomed and flashed ${element.name} (${element.stepId})` }]);
     window.setTimeout(() => setFocused(null), 2600);
   }
@@ -381,6 +444,12 @@ export default function App() {
         onDeleteSelected={deleteSelectedClasses}
         onExportVisible={exportVisibleClasses}
         onFullscreen={toggleFullscreen}
+        tool={viewerTool}
+        onToolChange={setViewerTool}
+        onFitSelection={() => setViewerAction((current) => ({ type: "fit", token: current.token + 1 }))}
+        onResetCamera={() => setViewerAction((current) => ({ type: "reset", token: current.token + 1 }))}
+        exportSchema={exportSchema}
+        onExportSchemaChange={setExportSchema}
         busy={exportBusy}
       />
       <div className="hidden">
@@ -399,6 +468,9 @@ export default function App() {
               onSelect={handleClassSelect}
               onToggleVisibility={toggleClassVisibility}
               onIsolate={isolateClass}
+              onLoad={loadClassGeometry}
+              loadedClasses={loadedClasses}
+              loadingClass={loadingClass}
             />
           </div>
           <ResizeHandle axis="y" onResize={(delta) => setClassPanelHeight((value) => clamp(value + delta, 130, 520))} />
@@ -423,6 +495,12 @@ export default function App() {
             onLoadFromBackend={loadBackendIfcGeometry}
             expanded={viewerExpanded}
             onToggleExpanded={toggleFullscreen}
+            tool={viewerTool}
+            action={viewerAction}
+            selectedIds={selectedElementIds}
+            onSelectionChange={setSelectedElementIds}
+            hiddenIds={hiddenElementIds}
+            onShowHidden={() => setHiddenElementIds(new Set())}
           />
         </div>
       </div>
@@ -440,6 +518,13 @@ function now(): string {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function normalizeSchema(schema: string): IfcSchema {
+  const value = schema.toUpperCase();
+  if (value.includes("4X3")) return "IFC4X3";
+  if (value.includes("IFC4")) return "IFC4";
+  return "IFC2X3";
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

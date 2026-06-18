@@ -109,7 +109,10 @@ def export_ifc(project_id: str, payload: ExportRequest, db: Session = Depends(ge
     _require_project(db, project_id)
     task_id = str(uuid4())
     record = _create_task_record(db, task_id, project_id, TaskKind.ifc_export)
-    export_ifc_subset.apply_async(args=[project_id, payload.classes or [], payload.element_ids or []], task_id=task_id)
+    export_ifc_subset.apply_async(
+        args=[project_id, payload.classes or [], payload.element_ids or [], payload.target_schema],
+        task_id=task_id,
+    )
     db.refresh(record)
     return record
 

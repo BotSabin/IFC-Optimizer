@@ -26,8 +26,13 @@ def delete_classes(self, project_id: str, classes: list[str]) -> dict:
 
 
 @celery_app.task(bind=True)
-def export_ifc_subset(self, project_id: str, classes: list[str], element_ids: list[int]) -> dict:
-    return _run_task(self.request.id, project_id, "IFC export", lambda project: _export_ifc(project, classes, element_ids))
+def export_ifc_subset(self, project_id: str, classes: list[str], element_ids: list[int], target_schema: str) -> dict:
+    return _run_task(
+        self.request.id,
+        project_id,
+        "IFC export",
+        lambda project: _export_ifc(project, classes, element_ids, target_schema),
+    )
 
 
 @celery_app.task(bind=True)
@@ -88,11 +93,11 @@ def _delete_classes(project: Project, classes: list[str]) -> dict:
     return ifc_service.delete_classes(source, target, classes)
 
 
-def _export_ifc(project: Project, classes: list[str], element_ids: list[int]) -> dict:
+def _export_ifc(project: Project, classes: list[str], element_ids: list[int], target_schema: str) -> dict:
     source = storage.path_for_key(project.storage_key)
-    filename = "Pipes_Only.ifc" if classes and all("Pipe" in item for item in classes) else "Selected.ifc"
+    filename = f"Visible_{target_schema}.ifc"
     target = storage.export_path(f"{project.id}_{filename}")
-    return ifc_service.export_subset(source, target, classes, element_ids)
+    return ifc_service.export_subset(source, target, classes, element_ids, target_schema)
 
 
 def _export_glb(project: Project) -> dict:

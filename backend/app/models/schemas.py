@@ -60,6 +60,7 @@ class DeleteClassesRequest(BaseModel):
 class ExportRequest(BaseModel):
     classes: list[str] | None = None
     element_ids: list[int] | None = None
+    target_schema: str = Field(default="IFC2X3", pattern="^(IFC2X3|IFC4|IFC4X3)$")
 
 
 class GeometryMesh(BaseModel):

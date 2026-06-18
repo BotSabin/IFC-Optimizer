@@ -1,4 +1,7 @@
 export type OptimizationMode = "safe" | "medium" | "aggressive";
+export type ViewerTool = "orbit" | "select" | "box" | "measure";
+export type ViewerAction = "fit" | "reset" | null;
+export type IfcSchema = "IFC2X3" | "IFC4" | "IFC4X3";
 
 export type IfcClassStat = {
   name: string;
