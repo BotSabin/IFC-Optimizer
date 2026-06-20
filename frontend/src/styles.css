@@ -28,6 +28,20 @@ button {
   border-radius: 0;
 }
 
+@layer components {
+  .hub-primary-button {
+    @apply h-9 inline-flex items-center justify-center gap-2 border border-sky-400 bg-sky-400 px-3 text-xs font-medium text-slate-950 hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .hub-secondary-button {
+    @apply h-9 inline-flex items-center justify-center gap-2 border border-line bg-panel2 px-3 text-xs text-slate-200 hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .hub-compact-button {
+    @apply h-8 inline-flex items-center justify-center gap-2 border border-line bg-panel2 px-2 text-xs text-slate-300 hover:bg-slate-700;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -45,4 +59,3 @@ button {
 ::-webkit-scrollbar-thumb:hover {
   background: #4b5563;
 }
-

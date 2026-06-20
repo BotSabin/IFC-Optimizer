@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     redis_url: str = "redis://redis:6379/0"
     celery_always_eager: bool = True
     cors_origins: str = "http://localhost:5173,http://127.0.0.1:5173"
+    cors_origin_regex: str = r"^https?://(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$"
     storage_root: Path = Path("storage")
     max_upload_mb: int = 2048
     s3_endpoint_url: str | None = None

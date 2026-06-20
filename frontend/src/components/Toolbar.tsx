@@ -4,6 +4,7 @@ import {
   EyeOff,
   FileDown,
   Focus,
+  LayoutGrid,
   Maximize,
   Move3D,
   Navigation,
@@ -30,6 +31,7 @@ type Props = {
   exportSchema: IfcSchema;
   onExportSchemaChange: (schema: IfcSchema) => void;
   busy: boolean;
+  onBackToProjects: () => void;
 };
 
 const iconButton =
@@ -49,7 +51,8 @@ export function Toolbar({
   onResetCamera,
   exportSchema,
   onExportSchemaChange,
-  busy
+  busy,
+  onBackToProjects
 }: Props) {
   const toolButton = (value: ViewerTool) => `${iconButton} ${tool === value ? "border-brand bg-sky-500/20 text-brand" : ""}`;
   return (
@@ -57,6 +60,9 @@ export function Toolbar({
       <div className="flex items-center gap-3 min-w-0">
         <div className="font-semibold text-white tracking-wide whitespace-nowrap">IFC Optimizer Pro Web</div>
         <div className="hidden md:flex items-center gap-1">
+          <button className={iconButton} onClick={onBackToProjects} title="Back to IFC project hub">
+            <LayoutGrid size={17} />
+          </button>
           <button className={iconButton} onClick={onUploadClick} title="Upload IFC">
             <Upload size={17} />
           </button>

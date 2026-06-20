@@ -5,15 +5,19 @@ import { ClassTree } from "./components/ClassTree";
 import { ElementBrowser } from "./components/ElementBrowser";
 import { MetricGrid } from "./components/MetricGrid";
 import { OptimizerPanel } from "./components/OptimizerPanel";
+import { ProjectHub } from "./components/ProjectHub";
 import { Toolbar } from "./components/Toolbar";
 import { UploadPanel } from "./components/UploadPanel";
 import { Viewer } from "./components/Viewer";
 import { classColors, initialClasses, logs as seedLogs, summary as demoSummary } from "./data/demoModel";
 import { apiFetch } from "./lib/api";
 import { bytes } from "./lib/format";
-import { extractLocalIfcGeometry } from "./lib/webIfcGeometry";
+import { extractFullModelCloud, extractLocalIfcGeometry } from "./lib/webIfcGeometry";
 import {
   AnalysisSummary,
+  BackendAnalysis,
+  BackendProject,
+  FullModelCloud,
   GeometryMesh,
   GeometryStatus,
   IfcClassStat,
@@ -25,27 +29,12 @@ import {
   ViewerTool
 } from "./types/bim";
 
-type BackendAnalysis = {
-  schema: string;
-  total_entities: number;
-  total_products: number;
-  total_ifc_classes: number;
-  file_size: number;
-  geometry_count: number;
-  triangle_count: number;
-  property_count: number;
-  quantity_count: number;
-  classes: { name: string; count: number; geometry: number; triangles: number }[];
-};
-
-type BackendProject = {
-  id: string;
-  filename: string;
-  status: string;
-  analysis: BackendAnalysis | null;
-};
-
 export default function App() {
+  const [workspace, setWorkspace] = useState<"hub" | "viewer">("hub");
+  const [projects, setProjects] = useState<BackendProject[]>([]);
+  const [projectsLoading, setProjectsLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [hubActivity, setHubActivity] = useState("");
   const [classes, setClasses] = useState(initialClasses);
   const [summary, setSummary] = useState<AnalysisSummary>(demoSummary);
   const [selectedClasses, setSelectedClasses] = useState<string[]>(["IfcPipeSegment", "IfcDuctSegment"]);
@@ -58,6 +47,8 @@ export default function App() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [geometry, setGeometry] = useState<GeometryMesh[]>([]);
   const [geometryStatus, setGeometryStatus] = useState<GeometryStatus>("demo");
+  const [fullModelCloud, setFullModelCloud] = useState<FullModelCloud | null>(null);
+  const [fullModelProgress, setFullModelProgress] = useState(0);
   const [exportBusy, setExportBusy] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(400);
   const [classPanelHeight, setClassPanelHeight] = useState(260);
@@ -74,7 +65,7 @@ export default function App() {
   const backendLoadStarted = useRef<string | null>(null);
 
   const selectedElements = useMemo(() => {
-    if (geometry.length) {
+    if (geometry.length || fullModelCloud) {
       const realElements = new Map<number, IfcElement>();
       geometry.forEach((item) => {
         if (!realElements.has(item.step_id)) {
@@ -86,30 +77,64 @@ export default function App() {
           });
         }
       });
+      fullModelCloud?.classes.forEach((item) => {
+        if (selectedClasses.length && !selectedClasses.includes(item.class_name)) return;
+        for (let index = 0; index < item.step_ids.length; index += 1) {
+          const stepId = item.step_ids[index];
+          if (realElements.has(stepId)) continue;
+          realElements.set(stepId, {
+            stepId,
+            globalId: `STEP-${stepId}`,
+            name: `${item.class_name}-${stepId}`,
+            className: item.class_name
+          });
+        }
+      });
       const rows = [...realElements.values()];
       return selectedClasses.length ? rows.filter((item) => selectedClasses.includes(item.className)) : rows;
     }
     const generated = buildElements(classes);
     return selectedClasses.length ? generated.filter((item) => selectedClasses.includes(item.className)) : generated;
-  }, [classes, geometry, selectedClasses]);
+  }, [classes, fullModelCloud, geometry, selectedClasses]);
 
   useEffect(() => {
-    async function loadLatestProject() {
-      try {
-        const response = await apiFetch("/api/v1/projects", { cache: "no-store" });
-        if (!response.ok) return;
-        const projects = (await response.json()) as BackendProject[];
-        const latest = projects.find((project) => project.analysis);
-        if (latest?.analysis) {
-          applyAnalysis(latest.id, latest.filename, latest.analysis);
-          setLogs((current) => [...current, { time: now(), message: `Loaded latest backend model: ${latest.filename}` }]);
-        }
-      } catch {
-        // Keep demo state when the backend is intentionally offline.
-      }
-    }
-    loadLatestProject();
+    void refreshProjects();
   }, []);
+
+  async function refreshProjects() {
+    setProjectsLoading(true);
+    try {
+      const response = await apiFetch("/api/v1/projects", { cache: "no-store" });
+      if (!response.ok) throw new Error(await response.text());
+      setProjects((await response.json()) as BackendProject[]);
+      setHubActivity("");
+    } catch (error) {
+      setHubActivity(error instanceof Error ? `Backend unavailable: ${error.message}` : "Backend unavailable");
+    } finally {
+      setProjectsLoading(false);
+    }
+  }
+
+  function openProject(project: BackendProject) {
+    if (!project.analysis) return;
+    applyAnalysis(project.id, project.filename, project.analysis);
+    setLogs([{ time: now(), message: `Opened ${project.filename} from Project Hub` }]);
+    setWorkspace("viewer");
+  }
+
+  function openDemo() {
+    setProjectId(null);
+    setModelName("Demo coordination model");
+    setIsDemo(true);
+    setClasses(initialClasses);
+    setSummary(demoSummary);
+    setSelectedClasses(["IfcPipeSegment", "IfcDuctSegment"]);
+    setGeometry([]);
+    setFullModelCloud(null);
+    setGeometryStatus("demo");
+    setLogs(seedLogs);
+    setWorkspace("viewer");
+  }
 
   function applyAnalysis(nextProjectId: string, filename: string, analysis: BackendAnalysis) {
     const nextClasses = mapClasses(analysis);
@@ -117,6 +142,8 @@ export default function App() {
     setModelName(filename);
     setIsDemo(false);
     setGeometry([]);
+    setFullModelCloud(null);
+    setFullModelProgress(0);
     setSelectedElementIds(new Set());
     setHiddenElementIds(new Set());
     setLoadedClasses(new Set());
@@ -157,10 +184,10 @@ export default function App() {
         const payload = await response.json();
         if (payload.meshes?.length) {
           setGeometry(payload.meshes);
-          setLoadedClasses(new Set(payload.meshes.map((item: GeometryMesh) => item.class_name.toLowerCase())));
           setGeometryStatus("ready");
           setProgress(100);
           setLogs((current) => [...current, { time: now(), message: `Loaded ${payload.mesh_count} real IFC meshes from server cache` }]);
+          if (isLocalNetworkHost()) void loadFullModelFromBackend();
           return;
         }
       }
@@ -186,7 +213,6 @@ export default function App() {
       if (!response.ok) throw new Error(await response.text());
       const payload = await response.json();
       setGeometry(payload.meshes ?? []);
-      setLoadedClasses(new Set((payload.meshes ?? []).map((item: GeometryMesh) => item.class_name.toLowerCase())));
       setGeometryStatus(payload.meshes?.length ? "ready" : "empty");
       setLogs((current) => [...current, { time: now(), message: `Loaded ${payload.mesh_count} real IFC geometry meshes` }]);
     } catch (error) {
@@ -202,7 +228,7 @@ export default function App() {
     }
   }
 
-  async function loadLocalGeometryPreview(file: File) {
+  async function loadLocalGeometryPreview(file: File, expectedProducts = summary.totalProducts) {
     try {
       setGeometry([]);
       setGeometryStatus("loading");
@@ -212,12 +238,46 @@ export default function App() {
         setLogs((current) => [...current.slice(-80), { time: now(), message }]);
       }, preferredClasses);
       setGeometry(meshes);
-      setLoadedClasses(new Set(meshes.map((item) => item.class_name.toLowerCase())));
       setGeometryStatus(meshes.length ? "ready" : "empty");
       setLogs((current) => [...current, { time: now(), message: `Rendered ${meshes.length} local IFC geometry meshes` }]);
+      void loadFullModelCoverage(file, expectedProducts);
     } catch (error) {
       setGeometryStatus("failed");
       setLogs((current) => [...current, { time: now(), message: error instanceof Error ? error.message : "Local IFC geometry failed" }]);
+    }
+  }
+
+  async function loadFullModelCoverage(file: File, expectedProducts: number) {
+    try {
+      setFullModelProgress(1);
+      setLogs((current) => [...current, { time: now(), message: `Building solid full-model LOD for ${expectedProducts.toLocaleString()} IFC products` }]);
+      const cloud = await extractFullModelCloud(file, expectedProducts, (processed, expected, percent) => {
+        setFullModelProgress(percent);
+        if (processed % 25000 === 0) {
+          setLogs((current) => [
+            ...current.slice(-100),
+            { time: now(), message: `Full model: ${processed.toLocaleString()}/${expected.toLocaleString()} products` }
+          ]);
+        }
+      });
+      setFullModelCloud(cloud);
+      setFullModelProgress(100);
+      setLoadedClasses((current) => new Set([...current, ...cloud.classes.map((item) => item.class_name.toLowerCase())]));
+      setLogs((current) => [
+        ...current,
+        {
+          time: now(),
+          message: cloud.repaired_count
+            ? `Solid full model ready: ${cloud.product_count.toLocaleString()} products; grounded ${cloud.repaired_count.toLocaleString()} detached products by ${cloud.repair_offset_y.toFixed(3)} model units`
+            : `Solid full model ready: ${cloud.product_count.toLocaleString()} IFC products visible`
+        }
+      ]);
+    } catch (error) {
+      setFullModelProgress(0);
+      setLogs((current) => [
+        ...current,
+        { time: now(), message: error instanceof Error ? `Full model LOD failed: ${error.message}` : "Full model LOD failed" }
+      ]);
     }
   }
 
@@ -246,6 +306,24 @@ export default function App() {
       setLogs((current) => [
         ...current,
         { time: now(), message: error instanceof Error ? `Backend IFC load failed: ${error.message}` : "Backend IFC load failed" }
+      ]);
+    }
+  }
+
+  async function loadFullModelFromBackend() {
+    if (!projectId || fullModelCloud || fullModelProgress > 0) return;
+    try {
+      setFullModelProgress(1);
+      setLogs((current) => [...current, { time: now(), message: `Downloading source IFC for complete-model coverage (${bytes(summary.fileSize)})` }]);
+      const response = await apiFetch(`/api/v1/projects/${projectId}/source`, { cache: "no-store" });
+      if (!response.ok) throw new Error(await response.text());
+      const blob = await response.blob();
+      await loadFullModelCoverage(new File([blob], modelName, { type: "application/x-step" }), summary.totalProducts);
+    } catch (error) {
+      setFullModelProgress(0);
+      setLogs((current) => [
+        ...current,
+        { time: now(), message: error instanceof Error ? `Complete model load failed: ${error.message}` : "Complete model load failed" }
       ]);
     }
   }
@@ -305,11 +383,36 @@ export default function App() {
 
   async function exportVisibleClasses() {
     if (!projectId || exportBusy) return;
-    const visibleClassNames = new Set(classes.filter((item) => item.visible).map((item) => item.name.toLowerCase()));
+    const visibleClasses = classes.filter((item) => item.visible).map((item) => item.name);
+    const visibleClassNames = new Set(visibleClasses.map((item) => item.toLowerCase()));
+    if (!hiddenElementIds.size) {
+      if (!visibleClasses.length) {
+        setLogs((current) => [...current, { time: now(), message: "Nothing to export: all classes are hidden" }]);
+        return;
+      }
+      await runIfcExport(
+        "export-ifc",
+        { classes: visibleClasses, target_schema: exportSchema },
+        `Visible-class export (${visibleClasses.length} classes, ${exportSchema})`
+      );
+      return;
+    }
+    if (!fullModelCloud) {
+      setLogs((current) => [
+        ...current,
+        { time: now(), message: "Load the complete model before exporting with individually hidden elements" }
+      ]);
+      return;
+    }
+    const fullIds = fullModelCloud
+      .classes
+      .filter((item) => visibleClassNames.has(item.class_name.toLowerCase()))
+      .flatMap((item) => Array.from(item.step_ids));
+    const solidIds = geometry
+      .filter((item) => visibleClassNames.has(item.class_name.toLowerCase()))
+      .map((item) => item.step_id);
     const visibleIds = [...new Set(
-      geometry
-        .filter((item) => visibleClassNames.has(item.class_name.toLowerCase()) && !hiddenElementIds.has(item.step_id))
-        .map((item) => item.step_id)
+      [...fullIds, ...solidIds].filter((id) => !hiddenElementIds.has(id))
     )];
     if (!visibleIds.length) {
       setLogs((current) => [...current, { time: now(), message: "Nothing to export: all classes are hidden" }]);
@@ -319,36 +422,86 @@ export default function App() {
   }
 
   async function loadClassGeometry(name: string) {
-    if (!projectId || loadingClass) return;
-    setLoadingClass(name);
-    setLogs((current) => [...current, { time: now(), message: `Loading ${name} geometry into viewer` }]);
+    await loadClassGeometryBatch([name], 240);
+  }
+
+  async function loadSelectedClassGeometry() {
+    const geometryClasses = selectedClasses.filter((name) => (classes.find((item) => item.name === name)?.geometry ?? 0) > 0);
+    if (!geometryClasses.length) {
+      setLogs((current) => [...current, { time: now(), message: "Selected classes contain no product geometry" }]);
+      return;
+    }
+    const requested = geometryClasses.slice(0, 12);
+    if (requested.length < geometryClasses.length) {
+      setLogs((current) => [
+        ...current,
+        { time: now(), message: `Solid preview limited to the first 12 of ${geometryClasses.length} selected classes; use Load all LOD for the complete model` }
+      ]);
+    }
+    await loadClassGeometryBatch(requested, requested.length <= 4 ? 240 : 120);
+  }
+
+  async function loadClassGeometryBatch(names: string[], perClassLimit: number) {
+    if (!projectId || loadingClass || !names.length) return;
+    setLoadingClass(names.length === 1 ? names[0] : "__selected__");
+    setLogs((current) => [
+      ...current,
+      {
+        time: now(),
+        message: names.length === 1
+          ? `Loading solid preview for ${names[0]} (maximum ${perClassLimit} meshes)`
+          : `Loading solid previews for ${names.length} selected classes`
+      }
+    ]);
     try {
-      const response = await apiFetch(`/api/v1/projects/${projectId}/geometry?limit=240&classes=${encodeURIComponent(name)}`, { cache: "no-store" });
-      if (!response.ok) throw new Error(await response.text());
-      const payload = await response.json();
-      const incoming = (payload.meshes ?? []) as GeometryMesh[];
+      const incoming: GeometryMesh[] = [];
+      for (const name of names) {
+        const response = await apiFetch(
+          `/api/v1/projects/${projectId}/geometry?limit=${perClassLimit}&classes=${encodeURIComponent(name)}`,
+          { cache: "no-store" }
+        );
+        if (!response.ok) throw new Error(await response.text());
+        const payload = await response.json();
+        incoming.push(...((payload.meshes ?? []) as GeometryMesh[]));
+        const total = classes.find((item) => item.name === name)?.geometry ?? incoming.length;
+        setLogs((current) => [
+          ...current.slice(-100),
+          {
+            time: now(),
+            message: `Loaded ${payload.mesh_count} solid-preview meshes for ${name} of ${total.toLocaleString()} products; complete class is represented in full-model LOD`
+          }
+        ]);
+      }
       setGeometry((current) => {
         const merged = new Map(current.map((item) => [item.step_id, item]));
         incoming.forEach((item) => merged.set(item.step_id, item));
         return [...merged.values()];
       });
-      setClasses((current) => current.map((item) => (item.name === name ? { ...item, visible: true } : item)));
-      setLoadedClasses((current) => new Set([...current, name.toLowerCase()]));
-      setLogs((current) => [...current, { time: now(), message: `Loaded ${incoming.length} ${name} meshes; current camera preserved` }]);
+      setClasses((current) => current.map((item) => (names.includes(item.name) ? { ...item, visible: true } : item)));
+      setLoadedClasses((current) => new Set([...current, ...names.map((name) => name.toLowerCase())]));
+      setLogs((current) => [
+        ...current,
+        { time: now(), message: `Solid preview ready: ${incoming.length.toLocaleString()} meshes across ${names.length} class${names.length === 1 ? "" : "es"}; camera preserved` }
+      ]);
     } catch (error) {
-      setLogs((current) => [...current, { time: now(), message: error instanceof Error ? error.message : `Could not load ${name}` }]);
+      setLogs((current) => [...current, { time: now(), message: error instanceof Error ? error.message : "Could not load selected class previews" }]);
     } finally {
       setLoadingClass(null);
     }
   }
 
-  async function runIfcExport(action: "delete-classes" | "export-ifc", payload: object, label: string) {
-    if (!projectId) return;
+  async function runIfcExport(
+    action: "delete-classes" | "export-ifc",
+    payload: object,
+    label: string,
+    targetProjectId = projectId
+  ) {
+    if (!targetProjectId) return false;
     setExportBusy(true);
     setProgress(8);
     setLogs((current) => [...current, { time: now(), message: `${label} started; large IFC files can take several minutes` }]);
     try {
-      const response = await apiFetch(`/api/v1/projects/${projectId}/${action}`, {
+      const response = await apiFetch(`/api/v1/projects/${targetProjectId}/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
@@ -358,7 +511,7 @@ export default function App() {
       while (task.status === "queued" || task.status === "running") {
         setProgress(Math.max(8, task.progress ?? 8));
         await delay(1200);
-        const taskResponse = await apiFetch(`/api/v1/projects/${projectId}/tasks/${task.id}`, { cache: "no-store" });
+        const taskResponse = await apiFetch(`/api/v1/projects/${targetProjectId}/tasks/${task.id}`, { cache: "no-store" });
         if (!taskResponse.ok) throw new Error(await taskResponse.text());
         task = await taskResponse.json();
       }
@@ -372,7 +525,7 @@ export default function App() {
           message: `${label} complete: ${bytes(result.original_size ?? 0)} -> ${bytes(result.output_size ?? 0)} (${result.reduction_percent ?? 0}% smaller)`
         }
       ]);
-      const downloadResponse = await apiFetch(`/api/v1/projects/${projectId}/tasks/${task.id}/download`);
+      const downloadResponse = await apiFetch(`/api/v1/projects/${targetProjectId}/tasks/${task.id}/download`);
       if (!downloadResponse.ok) throw new Error(await downloadResponse.text());
       const downloadUrl = URL.createObjectURL(await downloadResponse.blob());
       const link = document.createElement("a");
@@ -380,36 +533,84 @@ export default function App() {
       link.download = task.result?.output?.split("/").at(-1) ?? "optimized.ifc";
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 30000);
+      return true;
     } catch (error) {
       setProgress(100);
       setLogs((current) => [...current, { time: now(), message: error instanceof Error ? error.message : "IFC export failed" }]);
+      return false;
     } finally {
       setExportBusy(false);
     }
+  }
+
+  async function exportProjectClasses(project: BackendProject, selected: string[], schema: IfcSchema) {
+    if (!selected.length) return;
+    setHubActivity(`Exporting ${selected.length} classes from ${project.filename}…`);
+    const succeeded = await runIfcExport(
+      "export-ifc",
+      { classes: selected, target_schema: schema },
+      `${project.filename}: ${selected.length}-class export`,
+      project.id
+    );
+    setHubActivity(succeeded ? `Export complete for ${project.filename}` : `Export failed for ${project.filename}; see activity log in viewer`);
+  }
+
+  async function uploadFiles(files: File[]) {
+    if (!files.length || uploading) return;
+    setUploading(true);
+    try {
+      for (let index = 0; index < files.length; index += 1) {
+        const file = files[index];
+        setHubActivity(`Uploading ${index + 1}/${files.length}: ${file.name}`);
+        await uploadProject(file);
+      }
+      setHubActivity(`${files.length} IFC file${files.length === 1 ? "" : "s"} loaded successfully`);
+      await refreshProjects();
+    } catch (error) {
+      setHubActivity(error instanceof Error ? error.message : "IFC upload failed");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function uploadProject(file: File): Promise<BackendProject> {
+    const body = new FormData();
+    body.append("file", file);
+    const response = await apiFetch("/api/v1/projects/upload", { method: "POST", body });
+    if (!response.ok) throw new Error(`${file.name}: ${await response.text()}`);
+    const payload = await response.json();
+    let project = payload.project as BackendProject;
+    for (let attempt = 0; !project.analysis && attempt < 180; attempt += 1) {
+      setHubActivity(`Analyzing ${file.name}…`);
+      await delay(1000);
+      const projectResponse = await apiFetch(`/api/v1/projects/${project.id}`, { cache: "no-store" });
+      if (!projectResponse.ok) throw new Error(`${file.name}: analysis status unavailable`);
+      project = await projectResponse.json();
+      if (project.status === "failed") throw new Error(`${file.name}: IFC analysis failed`);
+    }
+    if (!project.analysis) throw new Error(`${file.name}: IFC analysis timed out`);
+    setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)]);
+    return project;
   }
 
   async function handleFile(file: File) {
     setProgress(0);
     setLogs([{ time: now(), message: `Uploading ${file.name}` }]);
     try {
-      const body = new FormData();
-      body.append("file", file);
       setProgress(18);
       setLogs((current) => [...current, { time: now(), message: "Sending file to FastAPI backend" }]);
-      const response = await apiFetch("/api/v1/projects/upload", { method: "POST", body });
-      if (!response.ok) throw new Error(await response.text());
-      const payload = await response.json();
-      const analysis = payload.project.analysis as BackendAnalysis | null;
+      const project = await uploadProject(file);
+      const analysis = project.analysis;
       if (analysis) {
-        applyAnalysis(payload.project.id, payload.project.filename, analysis);
-        window.setTimeout(() => loadLocalGeometryPreview(file), 50);
+        applyAnalysis(project.id, project.filename, analysis);
+        window.setTimeout(() => loadLocalGeometryPreview(file, analysis.total_products), 50);
       } else {
         setLogs((current) => [...current, { time: now(), message: "Upload completed but backend returned no analysis payload" }]);
       }
       setProgress(100);
       setLogs((current) => [
         ...current,
-        { time: now(), message: `Analysis task ${payload.analysis_task_id} complete` },
+        { time: now(), message: "IFC analysis complete" },
         { time: now(), message: "Geometry cache and class statistics available" }
       ]);
     } catch (error) {
@@ -434,6 +635,23 @@ export default function App() {
     setViewerExpanded((value) => !value);
   }
 
+  if (workspace === "hub") {
+    return (
+      <ProjectHub
+        projects={projects}
+        loading={projectsLoading}
+        uploading={uploading}
+        exportBusy={exportBusy}
+        activity={hubActivity}
+        onUpload={uploadFiles}
+        onOpen={openProject}
+        onExport={exportProjectClasses}
+        onRefresh={() => void refreshProjects()}
+        onOpenDemo={openDemo}
+      />
+    );
+  }
+
   return (
     <div className="h-screen w-screen overflow-hidden bg-shell text-slate-100 flex flex-col">
       <Toolbar
@@ -451,6 +669,11 @@ export default function App() {
         exportSchema={exportSchema}
         onExportSchemaChange={setExportSchema}
         busy={exportBusy}
+        onBackToProjects={() => {
+          setViewerExpanded(false);
+          setWorkspace("hub");
+          void refreshProjects();
+        }}
       />
       <div className="hidden">
         <input id="ifc-upload-proxy" type="file" accept=".ifc,.ifczip" onChange={(event) => event.target.files?.[0] && handleFile(event.target.files[0])} />
@@ -466,11 +689,30 @@ export default function App() {
               classes={classes}
               selected={selectedClasses}
               onSelect={handleClassSelect}
+              onToggleSelected={(name) =>
+                setSelectedClasses((current) =>
+                  current.includes(name) ? current.filter((item) => item !== name) : [...current, name]
+                )
+              }
+              onSelectAll={(selected) => setSelectedClasses(selected ? classes.map((item) => item.name) : [])}
+              onSetSelectedVisibility={(visible) => {
+                setClasses((current) =>
+                  current.map((item) => (selectedClasses.includes(item.name) ? { ...item, visible } : item))
+                );
+                setLogs((current) => [
+                  ...current,
+                  { time: now(), message: `${visible ? "Shown" : "Hidden"} ${selectedClasses.length} selected IFC classes` }
+                ]);
+              }}
               onToggleVisibility={toggleClassVisibility}
               onIsolate={isolateClass}
               onLoad={loadClassGeometry}
+              onLoadSelected={loadSelectedClassGeometry}
+              onLoadCompleteModel={loadFullModelFromBackend}
               loadedClasses={loadedClasses}
               loadingClass={loadingClass}
+              fullModelLoaded={Boolean(fullModelCloud)}
+              fullModelProgress={fullModelProgress}
             />
           </div>
           <ResizeHandle axis="y" onResize={(delta) => setClassPanelHeight((value) => clamp(value + delta, 130, 520))} />
@@ -490,6 +732,10 @@ export default function App() {
             modelName={modelName}
             isDemo={isDemo}
             geometry={geometry}
+            detailedClasses={loadedClasses}
+            fullModelCloud={fullModelCloud}
+            fullModelProgress={fullModelProgress}
+            onLoadFullModel={loadFullModelFromBackend}
             geometryStatus={geometryStatus}
             onRequestGeometry={loadGeometryPreview}
             onLoadFromBackend={loadBackendIfcGeometry}
@@ -501,6 +747,7 @@ export default function App() {
             onSelectionChange={setSelectedElementIds}
             hiddenIds={hiddenElementIds}
             onShowHidden={() => setHiddenElementIds(new Set())}
+            projectId={projectId}
           />
         </div>
       </div>
@@ -525,6 +772,11 @@ function normalizeSchema(schema: string): IfcSchema {
   if (value.includes("4X3")) return "IFC4X3";
   if (value.includes("IFC4")) return "IFC4";
   return "IFC2X3";
+}
+
+function isLocalNetworkHost(): boolean {
+  const host = window.location.hostname;
+  return host === "localhost" || host === "127.0.0.1" || /^192\.168\./.test(host) || /^10\./.test(host) || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
 }
 
 function clamp(value: number, minimum: number, maximum: number): number {

@@ -16,12 +16,16 @@ export function ElementBrowser({ elements, classFilter, onZoom }: Props) {
       .filter((item) => `${item.stepId} ${item.globalId} ${item.name} ${item.className}`.toLowerCase().includes(query.toLowerCase()))
       .sort((a, b) => a.stepId - b.stepId);
   }, [classFilter, elements, query]);
+  const visibleRows = rows.slice(0, 1000);
 
   return (
     <section className="h-full min-h-0 overflow-hidden border-t border-line flex flex-col">
       <div className="h-9 shrink-0 px-3 border-b border-line flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wide text-slate-300">Element Browser</span>
-        <span className="text-[11px] text-slate-500">{rows.length} elements</span>
+        <span className="text-[11px] text-slate-500">
+          {visibleRows.length < rows.length ? `${visibleRows.length.toLocaleString()} of ` : ""}
+          {rows.length.toLocaleString()} elements
+        </span>
       </div>
       <label className="mx-3 my-2 h-9 shrink-0 border border-line bg-panel2 flex items-center px-2 gap-2">
         <Search size={15} className="text-slate-500" />
@@ -39,7 +43,7 @@ export function ElementBrowser({ elements, classFilter, onZoom }: Props) {
           <span>Name</span>
           <span>Class</span>
         </div>
-        {rows.map((item) => (
+        {visibleRows.map((item) => (
           <button
             key={item.globalId}
             className="w-full grid grid-cols-[70px_1.2fr_1fr_1fr] gap-2 px-3 py-2 text-left border-t border-line/60 text-slate-300 hover:bg-sky-500/15"

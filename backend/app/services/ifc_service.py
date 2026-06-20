@@ -6,11 +6,12 @@ import re
 import random
 import shutil
 import subprocess
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Iterable
 
-from app.models.schemas import AnalysisResult, ClassStat, GeometryMesh, GeometryResponse
+from app.models.schemas import AnalysisResult, ClassStat, ElementGeometryResponse, ElementPropertiesResponse, GeometryMesh, GeometryResponse
 
 CORE_CLASSES = [
     "IfcWall",
@@ -54,6 +55,13 @@ DISPLAY_NAMES = {
 
 class IfcService:
     """IfcOpenShell-backed service with deterministic fallback for development."""
+
+    def __init__(self) -> None:
+        self._cached_model_path: Path | None = None
+        self._cached_model_mtime: float | None = None
+        self._cached_model = None
+        self._model_lock = threading.RLock()
+        self._element_geometry_cache: dict[tuple[Path, int], ElementGeometryResponse] = {}
 
     def analyze(self, path: Path) -> AnalysisResult:
         try:
@@ -220,6 +228,113 @@ class IfcService:
         )
         cache_path.write_text(response.model_dump_json())
         return response
+
+    def element_properties(self, project_id: str, source: Path, step_id: int) -> ElementPropertiesResponse:
+        from ifcopenshell.util.element import get_container, get_psets, get_type  # type: ignore
+
+        with self._model_lock:
+            model = self._open_cached_model(source)
+            try:
+                entity = model.by_id(step_id)
+            except RuntimeError as error:
+                raise ValueError(f"IFC element #{step_id} was not found") from error
+            if entity is None:
+                raise ValueError(f"IFC element #{step_id} was not found")
+
+            raw_sets = get_psets(entity, should_inherit=True)
+            property_sets: dict[str, dict[str, str]] = {}
+            for set_name, values in raw_sets.items():
+                if not isinstance(values, dict):
+                    continue
+                clean_values = {
+                    str(name): self._property_text(value)
+                    for name, value in values.items()
+                    if name != "id"
+                }
+                if clean_values:
+                    property_sets[str(set_name)] = clean_values
+
+            entity_type = get_type(entity)
+            container = get_container(entity)
+            return ElementPropertiesResponse(
+                project_id=project_id,
+                step_id=step_id,
+                class_name=entity.is_a(),
+                name=getattr(entity, "Name", None),
+                global_id=getattr(entity, "GlobalId", None),
+                type_name=getattr(entity_type, "Name", None) if entity_type else None,
+                container=getattr(container, "Name", None) if container else None,
+                property_sets=property_sets,
+            )
+
+    def element_geometry(self, project_id: str, source: Path, step_id: int) -> ElementGeometryResponse:
+        import ifcopenshell.geom  # type: ignore
+
+        cache_key = (source.resolve(), step_id)
+        cached = self._element_geometry_cache.get(cache_key)
+        if cached:
+            return cached
+        with self._model_lock:
+            cached = self._element_geometry_cache.get(cache_key)
+            if cached:
+                return cached
+            model = self._open_cached_model(source)
+            try:
+                product = model.by_id(step_id)
+            except RuntimeError as error:
+                raise ValueError(f"IFC element #{step_id} was not found") from error
+            if product is None or not getattr(product, "Representation", None):
+                raise ValueError(f"IFC element #{step_id} has no renderable representation")
+
+            settings = ifcopenshell.geom.settings()
+            settings.set(settings.USE_WORLD_COORDS, True)
+            try:
+                shape = ifcopenshell.geom.create_shape(settings, product)
+            except Exception as error:
+                raise ValueError(f"IFC geometry for element #{step_id} could not be generated") from error
+
+            geometry = shape.geometry
+            positions = [float(value) for value in geometry.verts]
+            indices = [int(value) for value in geometry.faces]
+            mesh = GeometryMesh(
+                step_id=int(product.id()),
+                global_id=getattr(product, "GlobalId", None),
+                name=getattr(product, "Name", None),
+                class_name=product.is_a(),
+                color=self._class_color(product.is_a()),
+                positions=positions,
+                indices=indices,
+            )
+            response = ElementGeometryResponse(project_id=project_id, step_id=step_id, meshes=[mesh])
+            self._element_geometry_cache[cache_key] = response
+            return response
+
+    def _open_cached_model(self, source: Path):
+        import ifcopenshell  # type: ignore
+
+        with self._model_lock:
+            resolved = source.resolve()
+            modified = resolved.stat().st_mtime
+            if self._cached_model is None or self._cached_model_path != resolved or self._cached_model_mtime != modified:
+                self._cached_model = ifcopenshell.open(str(resolved))
+                self._cached_model_path = resolved
+                self._cached_model_mtime = modified
+                self._element_geometry_cache.clear()
+            return self._cached_model
+
+    @staticmethod
+    def _property_text(value) -> str:
+        if value is None:
+            return "—"
+        if isinstance(value, bool):
+            return "Yes" if value else "No"
+        if isinstance(value, (str, int, float)):
+            return str(value)
+        if isinstance(value, (list, tuple)):
+            return ", ".join(IfcService._property_text(item) for item in value)
+        if isinstance(value, dict):
+            return ", ".join(f"{key}: {IfcService._property_text(item)}" for key, item in value.items() if key != "id")
+        return str(value)
 
     def _generate_web_ifc_cache(
         self,

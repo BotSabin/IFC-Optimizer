@@ -80,3 +80,20 @@ class GeometryResponse(BaseModel):
     mesh_count: int
     limit: int
     meshes: list[GeometryMesh]
+
+
+class ElementPropertiesResponse(BaseModel):
+    project_id: str
+    step_id: int
+    class_name: str
+    name: str | None = None
+    global_id: str | None = None
+    type_name: str | None = None
+    container: str | None = None
+    property_sets: dict[str, dict[str, str]]
+
+
+class ElementGeometryResponse(BaseModel):
+    project_id: str
+    step_id: int
+    meshes: list[GeometryMesh]

@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.models.database import get_db
 from app.models.project import BackgroundTask, Project, ProjectStatus, TaskKind
-from app.models.schemas import DeleteClassesRequest, ExportRequest, GeometryResponse, OptimizeRequest, ProjectRead, TaskRead, UploadResponse
+from app.models.schemas import DeleteClassesRequest, ElementGeometryResponse, ElementPropertiesResponse, ExportRequest, GeometryResponse, OptimizeRequest, ProjectRead, TaskRead, UploadResponse
 from app.services.ifc_service import IfcService
 from app.services.storage import LocalStorage
 from app.tasks.ifc_tasks import analyze_ifc, delete_classes, export_glb, export_ifc_subset, optimize_ifc
@@ -82,6 +82,32 @@ def download_project_source(project_id: str, db: Session = Depends(get_db)) -> F
     if path.parent != uploads_dir or not path.is_file():
         raise HTTPException(status_code=404, detail="IFC source file not found")
     return FileResponse(path, filename=project.filename, media_type="application/x-step")
+
+
+@router.get("/{project_id}/elements/{step_id}/properties", response_model=ElementPropertiesResponse)
+def get_element_properties(project_id: str, step_id: int, db: Session = Depends(get_db)) -> ElementPropertiesResponse:
+    project = _require_project(db, project_id)
+    try:
+        return ifc_service.element_properties(
+            project_id=project.id,
+            source=storage.path_for_key(project.storage_key),
+            step_id=step_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@router.get("/{project_id}/elements/{step_id}/geometry", response_model=ElementGeometryResponse)
+def get_element_geometry(project_id: str, step_id: int, db: Session = Depends(get_db)) -> ElementGeometryResponse:
+    project = _require_project(db, project_id)
+    try:
+        return ifc_service.element_geometry(
+            project_id=project.id,
+            source=storage.path_for_key(project.storage_key),
+            step_id=step_id,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
 
 
 @router.post("/{project_id}/optimize", response_model=TaskRead)

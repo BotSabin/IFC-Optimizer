@@ -1,8 +1,14 @@
 import { IfcAPI } from "web-ifc";
 import wasmUrl from "web-ifc/web-ifc.wasm?url";
-import { GeometryMesh } from "../types/bim";
+import { FullModelCloud, GeometryMesh } from "../types/bim";
 
 const PREVIEW_LIMIT = 160;
+let activeFullModelWorker: Worker | null = null;
+let geometryRequestId = 0;
+const geometryRequests = new Map<
+  number,
+  { resolve: (meshes: GeometryMesh[]) => void; reject: (error: Error) => void }
+>();
 
 export async function extractLocalIfcGeometry(
   file: File,
@@ -60,6 +66,76 @@ export async function extractLocalIfcGeometry(
     ifc.CloseModel(modelID);
   }
   return meshes;
+}
+
+export async function extractFullModelCloud(
+  file: File,
+  expectedProducts: number,
+  onProgress?: (processed: number, expected: number, percent: number) => void
+): Promise<FullModelCloud> {
+  if (activeFullModelWorker) activeFullModelWorker.terminate();
+  const worker = new Worker(new URL("./fullModelWorker.ts", import.meta.url), { type: "module" });
+  activeFullModelWorker = worker;
+  const buffer = await file.arrayBuffer();
+  return new Promise((resolve, reject) => {
+    worker.onmessage = (event) => {
+      if (event.data.type === "geometry") {
+        const pending = geometryRequests.get(event.data.requestId);
+        if (pending) {
+          geometryRequests.delete(event.data.requestId);
+          pending.resolve(event.data.meshes ?? []);
+        }
+        return;
+      }
+      if (event.data.type === "geometry-error") {
+        const pending = geometryRequests.get(event.data.requestId);
+        if (pending) {
+          geometryRequests.delete(event.data.requestId);
+          pending.reject(new Error(event.data.message));
+        }
+        return;
+      }
+      if (event.data.type === "progress") {
+        onProgress?.(event.data.processed, event.data.expected, event.data.percent);
+        return;
+      }
+      if (event.data.type === "complete") {
+        resolve({
+          product_count: event.data.product_count,
+          classes: event.data.classes,
+          repaired_count: event.data.repaired_count ?? 0,
+          repair_offset_y: event.data.repair_offset_y ?? 0
+        });
+        return;
+      }
+      if (event.data.type === "error") {
+        worker.terminate();
+        if (activeFullModelWorker === worker) activeFullModelWorker = null;
+        reject(new Error(event.data.message));
+      }
+    };
+    worker.onerror = (event) => {
+      worker.terminate();
+      if (activeFullModelWorker === worker) activeFullModelWorker = null;
+      reject(new Error(event.message || "Full model worker failed"));
+    };
+    worker.postMessage({ type: "open", buffer, expectedProducts }, [buffer]);
+  });
+}
+
+export function extractFullModelElementGeometry(stepId: number): Promise<GeometryMesh[]> {
+  if (!activeFullModelWorker) return Promise.reject(new Error("Full IFC model is not active"));
+  const requestId = ++geometryRequestId;
+  return new Promise((resolve, reject) => {
+    geometryRequests.set(requestId, { resolve, reject });
+    activeFullModelWorker!.postMessage({ type: "geometry", requestId, stepId });
+    window.setTimeout(() => {
+      const pending = geometryRequests.get(requestId);
+      if (!pending) return;
+      geometryRequests.delete(requestId);
+      pending.reject(new Error("Exact IFC geometry timed out"));
+    }, 30000);
+  });
 }
 
 function collectPreviewIds(ifc: IfcAPI, modelID: number, preferredClasses: string[]): number[] {
