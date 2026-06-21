@@ -89,6 +89,41 @@ Set this Netlify environment variable:
 VITE_API_BASE_URL=https://your-backend-url
 ```
 
+## Railway deployment for frontend and backend
+
+Create two GitHub services from this repository in the same Railway project.
+
+Backend service:
+
+- root directory: `/backend`
+- config file: `/backend/railway.toml`
+- attach a persistent volume at `/data`
+- generate a public Railway domain
+- use at least 8 GB RAM for IFC files around 500 MB
+
+Backend variables:
+
+```text
+IFC_STORAGE_ROOT=/data
+IFC_DATABASE_URL=${{ifc-optimizer-db.DATABASE_URL}}
+IFC_CELERY_ALWAYS_EAGER=true
+IFC_CORS_ORIGINS=https://YOUR-FRONTEND-DOMAIN.up.railway.app
+```
+
+Frontend service:
+
+- root directory: `/frontend`
+- config file: `/frontend/railway.toml`
+- generate a public Railway domain
+- set `VITE_API_BASE_URL` to the backend public domain
+
+```text
+VITE_API_BASE_URL=https://YOUR-BACKEND-DOMAIN.up.railway.app
+```
+
+With eager task execution, analysis and export run inside the API service.
+Redis and the separate Celery worker are not required for this deployment.
+
 For the backend, use a service that supports long-running Python processes and workers. Render is prepared through `render.yaml` and includes:
 
 - FastAPI web service
