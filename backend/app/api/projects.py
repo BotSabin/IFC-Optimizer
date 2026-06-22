@@ -174,7 +174,8 @@ def download_task_output(project_id: str, task_id: str, db: Session = Depends(ge
     exports_dir = storage.settings.exports_dir.resolve()
     if path.parent != exports_dir or not path.is_file():
         raise HTTPException(status_code=404, detail="Export file not found")
-    return FileResponse(path, filename=path.name, media_type="application/x-step")
+    filename = (task.result or {}).get("download_name") or path.name
+    return FileResponse(path, filename=filename, media_type="application/x-step")
 
 
 def _require_project(db: Session, project_id: str) -> Project:

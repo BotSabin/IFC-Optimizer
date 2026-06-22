@@ -1,3 +1,4 @@
+from pathlib import Path
 from time import sleep
 
 from app.core.celery_app import celery_app
@@ -83,8 +84,13 @@ def _analyze(project: Project) -> dict:
 
 def _optimize(project: Project, mode: str) -> dict:
     source = storage.path_for_key(project.storage_key)
-    target = storage.export_path(f"{project.id}_{mode}_optimized.ifc")
-    return ifc_service.optimize(source, target, mode)
+    source_name = Path(project.filename).stem
+    download_name = f"{source_name}_{mode}_optimized.ifc"
+    target = storage.export_path(f"{project.id}_{download_name}")
+    return {
+        **ifc_service.optimize(source, target, mode),
+        "download_name": download_name,
+    }
 
 
 def _delete_classes(project: Project, classes: list[str]) -> dict:

@@ -493,7 +493,7 @@ export default function App() {
   }
 
   async function runIfcExport(
-    action: "delete-classes" | "export-ifc",
+    action: "delete-classes" | "export-ifc" | "optimize",
     payload: object,
     label: string,
     targetProjectId = projectId
@@ -532,7 +532,7 @@ export default function App() {
       const downloadUrl = URL.createObjectURL(await downloadResponse.blob());
       const link = document.createElement("a");
       link.href = downloadUrl;
-      link.download = task.result?.output?.split("/").at(-1) ?? "optimized.ifc";
+      link.download = task.result?.download_name ?? task.result?.output?.split("/").at(-1) ?? "optimized.ifc";
       link.click();
       window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 30000);
       return true;
@@ -543,6 +543,19 @@ export default function App() {
     } finally {
       setExportBusy(false);
     }
+  }
+
+  async function optimizeCurrentProject() {
+    if (!projectId || isDemo || exportBusy) {
+      if (isDemo || !projectId) {
+        setLogs((current) => [
+          ...current,
+          { time: now(), message: "Load an IFC project before running optimization" }
+        ]);
+      }
+      return;
+    }
+    await runIfcExport("optimize", { mode }, `${mode[0].toUpperCase()}${mode.slice(1)} optimization`);
   }
 
   async function exportProjectClasses(project: BackendProject, selected: string[], schema: IfcSchema) {
@@ -723,7 +736,13 @@ export default function App() {
           </div>
           <ResizeHandle axis="y" onResize={(delta) => setElementPanelHeight((value) => clamp(value + delta, 150, 620))} />
           <div className="shrink-0 max-h-52 overflow-y-auto">
-            <OptimizerPanel mode={mode} fileSize={summary.fileSize} />
+            <OptimizerPanel
+              mode={mode}
+              fileSize={summary.fileSize}
+              busy={exportBusy}
+              disabled={isDemo || !projectId}
+              onOptimize={() => void optimizeCurrentProject()}
+            />
           </div>
         </aside>
         <ResizeHandle axis="x" onResize={(delta) => setSidebarWidth((value) => clamp(value + delta, 320, 720))} responsive />

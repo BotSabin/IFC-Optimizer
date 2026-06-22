@@ -4,6 +4,9 @@ import { bytes } from "../lib/format";
 type Props = {
   mode: OptimizationMode;
   fileSize: number;
+  busy: boolean;
+  disabled?: boolean;
+  onOptimize: () => void;
 };
 
 const reduction = {
@@ -12,7 +15,7 @@ const reduction = {
   aggressive: 0.58
 };
 
-export function OptimizerPanel({ mode, fileSize }: Props) {
+export function OptimizerPanel({ mode, fileSize, busy, disabled = false, onOptimize }: Props) {
   const reduced = fileSize * (1 - reduction[mode]);
   return (
     <div className="p-3 border-t border-line bg-panel">
@@ -23,14 +26,21 @@ export function OptimizerPanel({ mode, fileSize }: Props) {
           <div className="text-lg font-semibold text-warn">{Math.round(reduction[mode] * 100)}%</div>
         </div>
         <div className="bg-panel2 border border-line p-2">
-          <div className="text-slate-500">Estimated size</div>
+          <div className="text-slate-500">Target estimate</div>
           <div className="text-lg font-semibold text-slate-100">{bytes(reduced)}</div>
         </div>
       </div>
-      <button className="mt-3 h-9 w-full bg-brand text-sm font-semibold text-slate-950 hover:bg-sky-300">
-        Queue Optimization
+      <div className="mt-2 text-[11px] leading-4 text-slate-500">
+        Actual size depends on removable IFC data. Geometry and placement are preserved.
+      </div>
+      <button
+        className="mt-3 h-9 w-full bg-brand text-sm font-semibold text-slate-950 hover:bg-sky-300 disabled:cursor-not-allowed disabled:opacity-50"
+        type="button"
+        onClick={onOptimize}
+        disabled={disabled || busy}
+      >
+        {busy ? "Optimizing IFC…" : "Optimize & Download IFC"}
       </button>
     </div>
   );
 }
-
