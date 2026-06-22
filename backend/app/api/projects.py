@@ -10,7 +10,7 @@ from app.models.database import get_db
 from app.models.project import BackgroundTask, Project, ProjectStatus, TaskKind
 from app.models.schemas import DeleteClassesRequest, ElementGeometryResponse, ElementPropertiesResponse, ExportRequest, GeometryResponse, OptimizeRequest, ProjectRead, TaskRead, UploadResponse
 from app.services.ifc_service import IfcService
-from app.services.storage import LocalStorage
+from app.services.storage import LocalStorage, StorageCapacityError
 from app.tasks.ifc_tasks import analyze_ifc, delete_classes, export_glb, export_ifc_subset, optimize_ifc
 
 router = APIRouter(prefix="/projects", tags=["projects"])
@@ -23,7 +23,10 @@ async def upload_ifc(file: UploadFile, db: Session = Depends(get_db)) -> UploadR
     if not file.filename or not file.filename.lower().endswith((".ifc", ".ifczip")):
         raise HTTPException(status_code=400, detail="Upload an IFC or IFCZIP file.")
 
-    key, size = await storage.save_upload(file)
+    try:
+        key, size = await storage.save_upload(file)
+    except StorageCapacityError as error:
+        raise HTTPException(status_code=507, detail=str(error)) from error
     project = Project(filename=file.filename, storage_key=key, file_size=size, status=ProjectStatus.uploaded)
     db.add(project)
     db.commit()
