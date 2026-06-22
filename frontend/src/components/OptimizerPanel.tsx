@@ -10,9 +10,9 @@ type Props = {
 };
 
 const reduction = {
-  safe: 0.18,
-  medium: 0.34,
-  aggressive: 0.58
+  safe: 0.03,
+  medium: 0.05,
+  aggressive: 0.08
 };
 
 export function OptimizerPanel({ mode, fileSize, busy, disabled = false, onOptimize }: Props) {
@@ -22,8 +22,8 @@ export function OptimizerPanel({ mode, fileSize, busy, disabled = false, onOptim
       <div className="text-xs font-semibold uppercase tracking-wide text-slate-300">IFC Optimizer</div>
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
         <div className="bg-panel2 border border-line p-2">
-          <div className="text-slate-500">Reduction</div>
-          <div className="text-lg font-semibold text-warn">{Math.round(reduction[mode] * 100)}%</div>
+          <div className="text-slate-500">Reduction target</div>
+          <div className="text-lg font-semibold text-warn">~{Math.round(reduction[mode] * 100)}%</div>
         </div>
         <div className="bg-panel2 border border-line p-2">
           <div className="text-slate-500">Target estimate</div>

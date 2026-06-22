@@ -72,7 +72,7 @@ class IfcService:
             return self._streaming_step_analysis(path)
 
     def estimate_reduction(self, file_size: int, mode: str) -> dict:
-        ratios = {"safe": 0.18, "medium": 0.34, "aggressive": 0.58}
+        ratios = {"safe": 0.03, "medium": 0.05, "aggressive": 0.08}
         reduction = ratios[mode]
         return {
             "mode": mode,
