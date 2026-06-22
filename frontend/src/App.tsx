@@ -164,18 +164,20 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!projectId || isDemo || summary.fileSize > 80 * 1024 * 1024) return;
-    loadGeometryPreview();
-  }, [projectId, isDemo, summary.fileSize]);
-
-  useEffect(() => {
     if (!projectId || isDemo || geometry.length || backendLoadStarted.current === projectId) return;
     backendLoadStarted.current = projectId;
-    window.setTimeout(() => loadCachedOrBackendGeometry(), 350);
+    window.setTimeout(
+      () => (isLocalNetworkHost() ? loadCachedOrBackendGeometry() : loadBackendIfcGeometry()),
+      350
+    );
   }, [projectId, isDemo]);
 
   async function loadCachedOrBackendGeometry() {
     if (!projectId) return;
+    if (!isLocalNetworkHost()) {
+      await loadBackendIfcGeometry();
+      return;
+    }
     try {
       setGeometryStatus("loading");
       setLogs((current) => [...current, { time: now(), message: "Checking server geometry cache" }]);
@@ -737,7 +739,7 @@ export default function App() {
             fullModelProgress={fullModelProgress}
             onLoadFullModel={loadFullModelFromBackend}
             geometryStatus={geometryStatus}
-            onRequestGeometry={loadGeometryPreview}
+            onRequestGeometry={isLocalNetworkHost() ? loadGeometryPreview : loadBackendIfcGeometry}
             onLoadFromBackend={loadBackendIfcGeometry}
             expanded={viewerExpanded}
             onToggleExpanded={toggleFullscreen}
